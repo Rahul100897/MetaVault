@@ -1,0 +1,32 @@
+# MetaVault — Shopify App Configuration
+
+client_id = ""
+
+name = "MetaVault"
+
+[access_scopes]
+scopes = "read_metafields,write_metafields,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_products,read_customers,read_orders"
+
+[webhooks]
+api_version = "2025-04"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = ["app/uninstalled"]
+
+  [[webhooks.subscriptions]]
+  topics = ["app/scopes_update"]
+  uri = "/webhooks/app/scopes_update"
+
+  # GDPR mandatory compliance webhooks
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/data_request"
+  compliance_topics = ["customers/data_request"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/redact"
+  compliance_topics = ["customers/redact"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/shop/redact"
+  compliance_topics = ["shop/redact"]

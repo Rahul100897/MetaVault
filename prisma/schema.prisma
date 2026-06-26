@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model ImportJob {
+  id             String    @id @default(cuid())
+  shopId         String
+  type           String
+  status         String    @default("pending")
+  totalRows      Int       @default(0)
+  successRows    Int       @default(0)
+  failedRows     Int       @default(0)
+  fileUrl        String?
+  errorReportUrl String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  @@index([shopId])
+  @@index([status])
+}
+
+model ExportJob {
+  id          String    @id @default(cuid())
+  shopId      String
+  type        String
+  status      String    @default("pending")
+  fileUrl     String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([shopId])
+  @@index([status])
+}
+
+model BackupJob {
+  id        String    @id @default(cuid())
+  shopId    String
+  status    String    @default("pending")
+  fileUrl   String?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([shopId])
+}
+
+model ActivityLog {
+  id           String   @id @default(cuid())
+  shopId       String
+  action       String
+  resourceType String
+  rowCount     Int      @default(0)
+  staffAccount String?
+  createdAt    DateTime @default(now())
+
+  @@index([shopId])
+  @@index([createdAt])
+}
