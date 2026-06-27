@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import { Page, Button, Text, BlockStack, InlineStack, Badge } from "@shopify/polaris";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import {
   listMetafields,
+  setMetafields,
   OWNER_CONFIG,
   OWNER_TYPES,
   isOwnerType,
@@ -22,6 +25,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const page = await listMetafields(admin, { ownerType, first: 25, after });
 
   return { ownerType, page };
+};
+
+type ActionData =
+  | { ok: true; intent: "set"; id: string; value: string }
+  | { ok: false; intent: string; error: string };
+
+export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
+  const { admin, session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") ?? "");
+
+  if (intent === "set") {
+    const ownerType = String(formData.get("ownerType") ?? "");
+    const input = {
+      ownerId: String(formData.get("ownerId") ?? ""),
+      namespace: String(formData.get("namespace") ?? ""),
+      key: String(formData.get("key") ?? ""),
+      type: String(formData.get("type") ?? ""),
+      value: String(formData.get("value") ?? ""),
+    };
+
+    try {
+      const result = await setMetafields(admin, [input]);
+      if (result.userErrors.length) {
+        return { ok: false, intent, error: result.userErrors[0].message };
+      }
+      const saved = result.metafields[0];
+      await prisma.activityLog.create({
+        data: {
+          shopId: session.shop,
+          action: "edit",
+          resourceType: ownerType.toLowerCase() || "metafield",
+          rowCount: 1,
+        },
+      });
+      return { ok: true, intent: "set", id: saved.id, value: saved.value };
+    } catch (err) {
+      return { ok: false, intent, error: err instanceof Error ? err.message : "Save failed" };
+    }
+  }
+
+  return { ok: false, intent, error: `Unknown action: ${intent}` };
 };
 
 // ---------------------------------------------------------------------------
@@ -44,6 +89,25 @@ function typeTone(type: string) {
 function truncate(value: string, max = 80) {
   if (value.length <= max) return value;
   return value.slice(0, max) + "…";
+}
+
+function isMultiline(type: string) {
+  return type === "multi_line_text_field" || type === "json" || type.startsWith("list.");
+}
+
+function iconBtn(bg: string): React.CSSProperties {
+  return {
+    flexShrink: 0,
+    width: "28px",
+    height: "28px",
+    borderRadius: "6px",
+    border: "none",
+    background: bg,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  };
 }
 
 const GRID_COLUMNS = "minmax(160px, 1.4fr) minmax(120px, 1fr) minmax(120px, 1fr) 180px minmax(200px, 2fr)";
@@ -121,7 +185,9 @@ function EmptyMetafields({ ownerLabel }: { ownerLabel: string }) {
 export default function MetafieldsPage() {
   const { ownerType, page } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const shopify = useAppBridge();
   const loadMore = useFetcher<typeof loader>();
+  const editFetcher = useFetcher<typeof action>();
 
   // Accumulated rows: reset whenever the owner type (i.e. the loader) changes.
   const [rows, setRows] = useState<MetafieldRow[]>(page.rows);
@@ -129,11 +195,73 @@ export default function MetafieldsPage() {
   const [hasNext, setHasNext] = useState<boolean>(page.hasNextPage);
   const [search, setSearch] = useState("");
 
+  // Inline editing
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  // Previous values for optimistic rollback, keyed by metafield id.
+  const rollbackRef = useRef<Record<string, string>>({});
+
   useEffect(() => {
     setRows(page.rows);
     setCursor(page.endCursor);
     setHasNext(page.hasNextPage);
+    setEditingId(null);
   }, [page]);
+
+  // React to inline-edit save results.
+  useEffect(() => {
+    if (editFetcher.state !== "idle" || !editFetcher.data) return;
+    const data = editFetcher.data;
+    if (data.ok && data.intent === "set") {
+      delete rollbackRef.current[data.id];
+      setRows((prev) => prev.map((r) => (r.id === data.id ? { ...r, value: data.value } : r)));
+      shopify.toast.show("Metafield updated");
+    } else if (!data.ok) {
+      // Roll back optimistic update.
+      const entries = Object.entries(rollbackRef.current);
+      if (entries.length) {
+        setRows((prev) =>
+          prev.map((r) => (r.id in rollbackRef.current ? { ...r, value: rollbackRef.current[r.id] } : r)),
+        );
+        rollbackRef.current = {};
+      }
+      shopify.toast.show(data.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editFetcher.state, editFetcher.data]);
+
+  const startEdit = (row: MetafieldRow) => {
+    setEditingId(row.id);
+    setDraft(row.value);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft("");
+  };
+
+  const saveEdit = (row: MetafieldRow) => {
+    if (draft === row.value) {
+      cancelEdit();
+      return;
+    }
+    rollbackRef.current[row.id] = row.value;
+    // Optimistic update
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, value: draft } : r)));
+    editFetcher.submit(
+      {
+        intent: "set",
+        ownerType,
+        ownerId: row.ownerId,
+        namespace: row.namespace,
+        key: row.key,
+        type: row.type,
+        value: draft,
+      },
+      { method: "post" },
+    );
+    cancelEdit();
+  };
 
   // Append loaded rows when the load-more fetcher returns.
   useEffect(() => {
@@ -176,6 +304,9 @@ export default function MetafieldsPage() {
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .mv-row:hover { background: #F1F1FF !important; }
         .mv-owner-tab { transition: all 0.15s ease; cursor: pointer; }
+        .mv-pencil { opacity: 0; transition: opacity 0.12s ease; flex-shrink: 0; }
+        .mv-value:hover .mv-pencil { opacity: 1; }
+        .mv-edit-input { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #6366F1; font-size: 13px; outline: none; font-family: inherit; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
       `}</style>
 
       <BlockStack gap="500">
@@ -306,9 +437,74 @@ export default function MetafieldsPage() {
                   <div>
                     <Badge tone={typeTone(row.type)}>{row.type}</Badge>
                   </div>
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    {truncate(row.value)}
-                  </Text>
+                  {editingId === row.id ? (
+                    <div style={{ display: "flex", gap: "6px", alignItems: "flex-start" }}>
+                      {isMultiline(row.type) ? (
+                        <textarea
+                          className="mv-edit-input"
+                          autoFocus
+                          rows={3}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                        />
+                      ) : (
+                        <input
+                          className="mv-edit-input"
+                          autoFocus
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveEdit(row);
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        aria-label="Save"
+                        onClick={() => saveEdit(row)}
+                        style={iconBtn("#10B981")}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                          <path d="M20 6L9 17l-5-5" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel"
+                        onClick={cancelEdit}
+                        style={iconBtn("#9CA3AF")}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                          <path d="M18 6L6 18M6 6l12 12" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      className="mv-value"
+                      onClick={() => startEdit(row)}
+                      title="Click to edit"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "8px",
+                        cursor: "pointer",
+                        minHeight: "20px",
+                      }}
+                    >
+                      <Text as="span" variant="bodySm" tone={row.value ? "subdued" : "disabled"}>
+                        {row.value ? truncate(row.value) : "— empty —"}
+                      </Text>
+                      <svg className="mv-pencil" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  )}
                 </div>
               ))}
 
