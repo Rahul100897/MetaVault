@@ -163,7 +163,7 @@ function iconBtn(bg: string): React.CSSProperties {
 }
 
 const GRID_COLUMNS =
-  "minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 170px minmax(200px, 2fr) 52px";
+  "36px minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 170px minmax(200px, 2fr) 52px";
 
 function TableSkeleton() {
   return (
@@ -180,7 +180,7 @@ function TableSkeleton() {
             background: i % 2 === 0 ? "#FFFFFF" : "#FAFAFB",
           }}
         >
-          {[60, 50, 70, 40, 90, 30].map((w, j) => (
+          {[20, 60, 50, 70, 40, 90, 30].map((w, j) => (
             <div
               key={j}
               style={{
@@ -266,6 +266,7 @@ export default function MetafieldsPage() {
     setCursor(page.endCursor);
     setHasNext(page.hasNextPage);
     setEditingId(null);
+    setSelected([]);
   }, [page]);
 
   // React to inline-edit save results.
@@ -401,6 +402,33 @@ export default function MetafieldsPage() {
     );
   }, [rows, search]);
 
+  // --- Bulk selection (Task 4) ---
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const allSelected =
+    filteredRows.length > 0 && filteredRows.every((r) => selectedSet.has(r.id));
+  const someSelected = selected.length > 0;
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+
+  const toggleRow = (id: string) => {
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      const visible = new Set(filteredRows.map((r) => r.id));
+      setSelected((prev) => prev.filter((id) => !visible.has(id)));
+    } else {
+      setSelected((prev) => Array.from(new Set([...prev, ...filteredRows.map((r) => r.id)])));
+    }
+  };
+
+  const selectedRows = useMemo(
+    () => rows.filter((r) => selectedSet.has(r.id)),
+    [rows, selectedSet],
+  );
+
   return (
     <Page>
       <style>{`
@@ -412,6 +440,7 @@ export default function MetafieldsPage() {
         .mv-edit-input { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #6366F1; font-size: 13px; outline: none; font-family: inherit; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
         .mv-trash:hover { background: #FEE2E2 !important; }
         .mv-trash:hover svg path { stroke: #DC2626; }
+        .mv-check { width: 16px; height: 16px; cursor: pointer; accent-color: #6366F1; }
       `}</style>
 
       <BlockStack gap="500">
@@ -482,6 +511,57 @@ export default function MetafieldsPage() {
           </div>
         </InlineStack>
 
+        {/* Bulk action bar */}
+        {someSelected && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "12px 18px",
+              background: "linear-gradient(135deg, #0A0F1E, #1E1B4B)",
+              borderRadius: "10px",
+              boxShadow: "0 4px 12px rgba(10,15,30,0.25)",
+            }}
+          >
+            <InlineStack gap="300" blockAlign="center">
+              <span
+                style={{
+                  background: "#6366F1",
+                  color: "#FFFFFF",
+                  borderRadius: "20px",
+                  padding: "2px 10px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                }}
+              >
+                {selected.length} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelected([])}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "rgba(255,255,255,0.6)",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                }}
+              >
+                Clear selection
+              </button>
+            </InlineStack>
+            <Button
+              variant="primary"
+              tone="critical"
+              loading={isDeleting}
+              onClick={() => setBulkConfirmOpen(true)}
+            >
+              {`Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        )}
+
         {/* Spreadsheet */}
         <div
           style={{
@@ -504,6 +584,18 @@ export default function MetafieldsPage() {
               zIndex: 2,
             }}
           >
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                aria-label="Select all loaded rows"
+                className="mv-check"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected && !allSelected;
+                }}
+                onChange={toggleSelectAll}
+              />
+            </div>
             {["Owner", "Namespace", "Key", "Type", "Value", ""].map((h, i) => (
               <Text key={i} as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
                 {h}
@@ -524,12 +616,25 @@ export default function MetafieldsPage() {
                     gridTemplateColumns: GRID_COLUMNS,
                     gap: "16px",
                     padding: "12px 20px",
-                    background: idx % 2 === 0 ? "#FFFFFF" : "#FAFAFB",
+                    background: selectedSet.has(row.id)
+                      ? "#EEF0FF"
+                      : idx % 2 === 0
+                        ? "#FFFFFF"
+                        : "#FAFAFB",
                     borderBottom: "1px solid #F3F4F6",
                     alignItems: "center",
                     transition: "background 0.1s",
                   }}
                 >
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${row.namespace}.${row.key}`}
+                      className="mv-check"
+                      checked={selectedSet.has(row.id)}
+                      onChange={() => toggleRow(row.id)}
+                    />
+                  </div>
                   <Text as="span" variant="bodySm" fontWeight="medium">
                     {row.ownerLabel}
                   </Text>
@@ -709,6 +814,48 @@ export default function MetafieldsPage() {
               <Text as="p" variant="bodySm" tone="critical">
                 This action cannot be undone. The metafield value will be removed
                 from this resource in Shopify.
+              </Text>
+            </div>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Bulk delete confirmation */}
+      <Modal
+        open={bulkConfirmOpen}
+        onClose={() => setBulkConfirmOpen(false)}
+        title={`Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}?`}
+        primaryAction={{
+          content: `Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}`,
+          destructive: true,
+          loading: isDeleting,
+          onAction: () => {
+            submitDelete(selectedRows);
+            setBulkConfirmOpen(false);
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setBulkConfirmOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              You're about to permanently delete{" "}
+              <Text as="span" fontWeight="semibold">
+                {selected.length} metafield{selected.length === 1 ? "" : "s"}
+              </Text>{" "}
+              across your selected {OWNER_CONFIG[ownerType].label.toLowerCase()}.
+            </Text>
+            <div
+              style={{
+                background: "#FEF2F2",
+                border: "1px solid #FECACA",
+                borderRadius: "8px",
+                padding: "12px 14px",
+              }}
+            >
+              <Text as="p" variant="bodySm" tone="critical">
+                This action cannot be undone. Deletions run in batches of 25 and
+                are applied directly in Shopify.
               </Text>
             </div>
           </BlockStack>
