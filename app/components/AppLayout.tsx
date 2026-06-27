@@ -77,6 +77,16 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Jobs",
+    to: "/app/jobs",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+        <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Backups",
     to: "/app/backups",
     icon: (
