@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useRevalidator } from "@remix-run/react";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Badge } from "@shopify/polaris";
+import { Page, Text, BlockStack, InlineStack, Button, Badge } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getDownloadUrl } from "../lib/r2.server";

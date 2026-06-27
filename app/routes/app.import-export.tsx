@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -19,10 +19,14 @@ import { exportQueue, importQueue } from "../lib/queue.server";
 import { uploadFile, buildFileKey } from "../lib/r2.server";
 import { validateImportCsv } from "../lib/metafield-import.server";
 import { OWNER_CONFIG, OWNER_TYPES } from "../lib/metafields.server";
+import { getPlan } from "../lib/plan.server";
+import { canImportExport } from "../lib/plans";
+import UpgradeModal from "../components/UpgradeModal";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-  return null;
+  const { session } = await authenticate.admin(request);
+  const plan = await getPlan(session.shop);
+  return { plan, allowed: canImportExport(plan) };
 };
 
 type PreviewRow = {
@@ -54,6 +58,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "");
+
+  // Import + export are Pro features. Validation (dry-run) stays open so users
+  // can see what they'd get.
+  if ((intent === "import" || intent === "export") && !canImportExport(await getPlan(session.shop))) {
+    return { ok: false, intent, error: "Import & export are Pro features." };
+  }
 
   if (intent === "validate") {
     const csvText = String(formData.get("csvText") ?? "");
@@ -128,11 +138,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
 // ---------------------------------------------------------------------------
 
 export default function ImportExportPage() {
+  const { allowed } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const validateFetcher = useFetcher<ActionData>();
   const importFetcher = useFetcher<ActionData>();
   const exportFetcher = useFetcher<ActionData>();
 
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [ownerType, setOwnerType] = useState<string>("PRODUCT");
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
@@ -227,6 +239,43 @@ export default function ImportExportPage() {
           </InlineStack>
         </div>
 
+        {!allowed && (
+          <Card>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "40px 24px", gap: "16px" }}>
+              <div
+                style={{
+                  width: "72px",
+                  height: "72px",
+                  borderRadius: "18px",
+                  background: "linear-gradient(135deg, #6366F1, #8B5CF6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+                  <rect x="5" y="11" width="14" height="9" rx="2" stroke="#fff" strokeWidth="2" />
+                  <path d="M8 11V8a4 4 0 018 0v3" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </div>
+              <BlockStack gap="100" inlineAlign="center">
+                <Text as="p" variant="headingMd" alignment="center">
+                  Import & Export is a Pro feature
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                  Upgrade to Pro to move metafields in and out as CSV, with dry-run
+                  validation and background jobs.
+                </Text>
+              </BlockStack>
+              <Button variant="primary" onClick={() => setUpgradeOpen(true)}>
+                See plans
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {allowed && (
+        <>
         {/* Export */}
         <Card>
           <BlockStack gap="400">
@@ -430,7 +479,16 @@ export default function ImportExportPage() {
             )}
           </BlockStack>
         </Card>
+        </>
+        )}
       </BlockStack>
+
+      <UpgradeModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        reason="Import & export are available on Pro and Agency plans."
+        highlight="pro"
+      />
     </Page>
   );
 }

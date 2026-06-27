@@ -60,8 +60,9 @@ export async function processImportJob(data: ImportJobData): Promise<void> {
       batch.forEach((row, i) => {
         const error = errorByIndex.get(i);
         if (error) failures.push(failureRow(row, error));
-        else successCount++;
       });
+      // Unique failed indices in this batch; the rest succeeded.
+      successCount += batch.length - errorByIndex.size;
     }
 
     // Error report CSV → R2 (only if there were any failures).

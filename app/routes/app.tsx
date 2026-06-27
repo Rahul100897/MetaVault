@@ -5,21 +5,23 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
+import { getPlan } from "../lib/plan.server";
 import AppLayout from "../components/AppLayout";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  const { session } = await authenticate.admin(request);
+  const plan = await getPlan(session.shop);
+  return { apiKey: process.env.SHOPIFY_API_KEY || "", plan };
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, plan } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
-      <AppLayout plan="free">
+      <AppLayout plan={plan}>
         <Outlet />
       </AppLayout>
     </AppProvider>

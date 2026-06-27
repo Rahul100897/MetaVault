@@ -6,6 +6,9 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { exportQueue } from "../lib/queue.server";
+import { getPlan, getDailyEditCount } from "../lib/plan.server";
+import { isPro, canBulkDelete, FREE_DAILY_LIMIT } from "../lib/plans";
+import UpgradeModal from "../components/UpgradeModal";
 import {
   listMetafields,
   setMetafields,
@@ -19,15 +22,19 @@ import {
 } from "../lib/metafields.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const ownerParam = url.searchParams.get("owner") ?? "PRODUCT";
   const ownerType: OwnerType = isOwnerType(ownerParam) ? ownerParam : "PRODUCT";
   const after = url.searchParams.get("after");
 
-  const page = await listMetafields(admin, { ownerType, first: 25, after });
+  const [page, plan] = await Promise.all([
+    listMetafields(admin, { ownerType, first: 25, after }),
+    getPlan(session.shop),
+  ]);
+  const dailyUsed = isPro(plan) ? 0 : await getDailyEditCount(session.shop);
 
-  return { ownerType, page };
+  return { ownerType, page, plan, dailyUsed };
 };
 
 type DeleteItem = { id: string; ownerId: string; namespace: string; key: string };
@@ -42,6 +49,19 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "");
+  const plan = await getPlan(session.shop);
+
+  // Free plan: enforce the 50-change/day cap for edits + deletes.
+  if (!isPro(plan) && (intent === "set" || intent === "delete")) {
+    const used = await getDailyEditCount(session.shop);
+    if (used >= FREE_DAILY_LIMIT) {
+      return {
+        ok: false,
+        intent,
+        error: `Daily free limit reached (${FREE_DAILY_LIMIT} changes). Upgrade to Pro for unlimited edits.`,
+      };
+    }
+  }
 
   if (intent === "set") {
     const ownerType = String(formData.get("ownerType") ?? "");
@@ -84,6 +104,9 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
     if (!items.length) {
       return { ok: false, intent, error: "Nothing to delete" };
     }
+    if (items.length > 1 && !canBulkDelete(plan)) {
+      return { ok: false, intent, error: "Bulk delete is a Pro feature." };
+    }
 
     const deletedIds: string[] = [];
     let partialError: string | null = null;
@@ -121,6 +144,9 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   }
 
   if (intent === "export") {
+    if (!isPro(plan)) {
+      return { ok: false, intent, error: "CSV export is a Pro feature." };
+    }
     const ownerType = String(formData.get("ownerType") ?? "PRODUCT");
     const job = await prisma.exportJob.create({
       data: { shopId: session.shop, type: "metafields", status: "queued" },
@@ -254,9 +280,14 @@ function EmptyMetafields({ ownerLabel }: { ownerLabel: string }) {
 // ---------------------------------------------------------------------------
 
 export default function MetafieldsPage() {
-  const { ownerType, page } = useLoaderData<typeof loader>();
+  const { ownerType, page, plan, dailyUsed } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
+  const pro = isPro(plan);
+  const [upgrade, setUpgrade] = useState<{ open: boolean; reason: string }>({
+    open: false,
+    reason: "",
+  });
   const loadMore = useFetcher<typeof loader>();
   const editFetcher = useFetcher<typeof action>();
   const deleteFetcher = useFetcher<typeof action>();
@@ -348,7 +379,19 @@ export default function MetafieldsPage() {
   }, [exportFetcher.state, exportFetcher.data]);
 
   const startExport = () => {
+    if (!pro) {
+      setUpgrade({ open: true, reason: "CSV export is a Pro feature." });
+      return;
+    }
     exportFetcher.submit({ intent: "export", ownerType }, { method: "post" });
+  };
+
+  const openBulkDelete = () => {
+    if (!pro) {
+      setUpgrade({ open: true, reason: "Bulk delete is a Pro feature." });
+      return;
+    }
+    setBulkConfirmOpen(true);
   };
 
   const submitDelete = (items: MetafieldRow[]) => {
@@ -490,9 +533,30 @@ export default function MetafieldsPage() {
                 Browse and edit metafields across your store in a spreadsheet view.
               </Text>
             </BlockStack>
-            <InlineStack gap="200">
+            <InlineStack gap="200" blockAlign="center">
+              {!pro && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    background: dailyUsed >= FREE_DAILY_LIMIT ? "#FEF2F2" : "#F3F4F6",
+                    border: `1px solid ${dailyUsed >= FREE_DAILY_LIMIT ? "#FECACA" : "#E5E7EB"}`,
+                    borderRadius: "20px",
+                    padding: "5px 12px",
+                  }}
+                >
+                  <Text
+                    as="span"
+                    variant="bodySm"
+                    tone={dailyUsed >= FREE_DAILY_LIMIT ? "critical" : "subdued"}
+                  >
+                    {dailyUsed}/{FREE_DAILY_LIMIT} edits today
+                  </Text>
+                </div>
+              )}
               <Button onClick={startExport} loading={exportFetcher.state !== "idle"}>
-                Export CSV
+                {pro ? "Export CSV" : "Export CSV (Pro)"}
               </Button>
               <Button url="/app/import-export">Import</Button>
             </InlineStack>
@@ -589,13 +653,10 @@ export default function MetafieldsPage() {
                 Clear selection
               </button>
             </InlineStack>
-            <Button
-              variant="primary"
-              tone="critical"
-              loading={isDeleting}
-              onClick={() => setBulkConfirmOpen(true)}
-            >
-              {`Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}`}
+            <Button variant="primary" tone="critical" loading={isDeleting} onClick={openBulkDelete}>
+              {pro
+                ? `Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}`
+                : `Bulk delete ${selected.length} (Pro)`}
             </Button>
           </div>
         )}
@@ -899,6 +960,13 @@ export default function MetafieldsPage() {
           </BlockStack>
         </Modal.Section>
       </Modal>
+
+      <UpgradeModal
+        open={upgrade.open}
+        onClose={() => setUpgrade({ open: false, reason: "" })}
+        reason={upgrade.reason}
+        highlight="pro"
+      />
     </Page>
   );
 }
