@@ -264,6 +264,36 @@ export async function updateEntry(
   return { entry: data.metaobjectUpdate.metaobject, userErrors: data.metaobjectUpdate.userErrors };
 }
 
+/** Create-or-update an entry by handle (used by CSV import). */
+export async function upsertEntry(
+  admin: AdminClient,
+  { type, handle, fields }: { type: string; handle: string; fields: FieldInput[] },
+): Promise<MutationResult> {
+  const mutation = `#graphql
+    mutation MetaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
+      metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
+        metaobject { id handle }
+        userErrors { field message code }
+      }
+    }`;
+  const data = await graphqlRequest<{
+    metaobjectUpsert: { metaobject: { id: string; handle: string } | null; userErrors: UserError[] };
+  }>(admin, mutation, { handle: { type, handle }, metaobject: { fields } });
+  return { entry: data.metaobjectUpsert.metaobject, userErrors: data.metaobjectUpsert.userErrors };
+}
+
+/** Collect all existing handles for a type (used to classify import rows). */
+export async function getExistingHandles(admin: AdminClient, type: string): Promise<Set<string>> {
+  const handles = new Set<string>();
+  let after: string | null = null;
+  do {
+    const page = await listEntries(admin, { type, first: 250, after });
+    for (const e of page.entries) handles.add(e.handle);
+    after = page.hasNextPage ? page.endCursor : null;
+  } while (after);
+  return handles;
+}
+
 export async function deleteEntry(
   admin: AdminClient,
   id: string,

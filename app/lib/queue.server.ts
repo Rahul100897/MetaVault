@@ -49,6 +49,10 @@ export type ImportJobData = {
   accessToken: string;
   fileUrl: string;
   type: "metafields" | "metaobjects";
+  /** Metaobject definition type (metaobject imports only). */
+  resourceType?: string;
+  /** CSV column → field key mapping (metaobject imports only). */
+  mapping?: Record<string, string>;
 };
 
 export type ExportJobData = {

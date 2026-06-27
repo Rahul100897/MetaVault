@@ -14,11 +14,15 @@ import {
   updateEntry,
   deleteEntry,
   getDefinitionByType,
+  getExistingHandles,
   type FieldInput,
 } from "../lib/metaobjects.server";
+import { mapRows, analyzeImport } from "../lib/metaobject-import.server";
 import { chunk } from "../lib/metafields";
-import { exportQueue } from "../lib/queue.server";
+import { exportQueue, importQueue } from "../lib/queue.server";
+import { uploadFile, buildFileKey } from "../lib/r2.server";
 import MetaobjectDrawer, { type DrawerMode } from "../components/MetaobjectDrawer";
+import MetaobjectImportModal from "../components/MetaobjectImportModal";
 import {
   inputKindForType,
   truncate,
@@ -53,6 +57,16 @@ type ActionData =
   | { ok: true; intent: "delete"; deletedIds: string[]; failed: number }
   | { ok: true; intent: "export"; jobId: string }
   | { ok: true; intent: "export-schema"; filename: string; json: string }
+  | {
+      ok: true;
+      intent: "import-validate";
+      total: number;
+      willCreate: number;
+      willUpdate: number;
+      willSkip: number;
+      errors: Array<{ line: number; handle: string; message: string }>;
+    }
+  | { ok: true; intent: "import-execute"; jobId: string }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -167,6 +181,68 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
       filename: `metavault-definition-${type}-${date}.json`,
       json: JSON.stringify(def, null, 2),
     };
+  }
+
+  if (intent === "import-validate") {
+    const type = String(form.get("type") ?? "");
+    const csvText = String(form.get("csvText") ?? "");
+    let mapping: Record<string, string> = {};
+    try {
+      mapping = JSON.parse(String(form.get("mapping") ?? "{}"));
+    } catch {
+      mapping = {};
+    }
+    const definitions = await listDefinitions(admin);
+    const def = definitions.find((d) => d.type === type);
+    if (!def) return { ok: false, intent, error: "Definition not found" };
+
+    const rows = mapRows(
+      csvText,
+      mapping,
+      def.fieldDefinitions.map((f) => ({ key: f.key, type: f.type, required: f.required })),
+    );
+    const existing = await getExistingHandles(admin, type);
+    const analysis = analyzeImport(rows, existing);
+    return {
+      ok: true,
+      intent: "import-validate",
+      total: analysis.total,
+      willCreate: analysis.willCreate,
+      willUpdate: analysis.willUpdate,
+      willSkip: analysis.willSkip,
+      errors: analysis.errors.slice(0, 50),
+    };
+  }
+
+  if (intent === "import-execute") {
+    const type = String(form.get("type") ?? "");
+    const csvText = String(form.get("csvText") ?? "");
+    if (!csvText.trim()) return { ok: false, intent, error: "The file is empty" };
+    let mapping: Record<string, string> = {};
+    try {
+      mapping = JSON.parse(String(form.get("mapping") ?? "{}"));
+    } catch {
+      mapping = {};
+    }
+
+    const job = await prisma.importJob.create({
+      data: { shopId: session.shop, type: "metaobjects", status: "queued" },
+    });
+    const key = buildFileKey(session.shop, "metaobject-import", job.id, "csv");
+    await uploadFile(key, csvText, "text/csv");
+    await prisma.importJob.update({ where: { id: job.id }, data: { fileUrl: key } });
+
+    await importQueue.add("import-metaobjects", {
+      jobId: job.id,
+      shopId: session.shop,
+      shopDomain: session.shop,
+      accessToken: String(session.accessToken ?? ""),
+      fileUrl: key,
+      type: "metaobjects",
+      resourceType: type,
+      mapping,
+    });
+    return { ok: true, intent: "import-execute", jobId: job.id };
   }
 
   return { ok: false, intent, error: `Unknown action: ${intent}` };
@@ -286,6 +362,7 @@ export default function MetaobjectsPage() {
   const [deleteTarget, setDeleteTarget] = useState<MetaobjectEntry | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [publishConfirm, setPublishConfirm] = useState<"ACTIVE" | "DRAFT" | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const isDeleting = deleteFetcher.state !== "idle";
 
@@ -512,6 +589,7 @@ export default function MetaobjectsPage() {
                       <Button onClick={startExport} loading={exportFetcher.state !== "idle"}>
                         Export CSV
                       </Button>
+                      <Button onClick={() => setImportOpen(true)}>Import CSV</Button>
                       <Button variant="primary" onClick={onAdd}>
                         Add entry
                       </Button>
@@ -593,6 +671,15 @@ export default function MetaobjectsPage() {
           entry={drawer.entry}
           onClose={() => setDrawer((d) => ({ ...d, open: false }))}
           onSaved={onSaved}
+        />
+      )}
+
+      {definition && (
+        <MetaobjectImportModal
+          open={importOpen}
+          definition={definition}
+          onClose={() => setImportOpen(false)}
+          onImported={() => setImportOpen(false)}
         />
       )}
 
