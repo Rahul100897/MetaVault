@@ -18,7 +18,7 @@ import prisma from "../db.server";
 import { exportQueue, importQueue } from "../lib/queue.server";
 import { uploadFile, buildFileKey } from "../lib/r2.server";
 import { validateImportCsv } from "../lib/metafield-import.server";
-import { OWNER_CONFIG, OWNER_TYPES } from "../lib/metafields.server";
+import { OWNER_CONFIG, OWNER_TYPES } from "../lib/metafields";
 import { getPlan } from "../lib/plan.server";
 import { canImportExport } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";

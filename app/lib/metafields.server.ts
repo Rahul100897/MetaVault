@@ -1,52 +1,24 @@
 /**
- * Metafields GraphQL helpers.
+ * Metafields GraphQL operations.
  *
  * Shopify has no single "list all metafields" query — metafields belong to an
  * owner resource (products, collections, customers, orders). We query the owner
  * connection and flatten each owner's metafields into one row per metafield,
  * which is what the spreadsheet editor renders.
+ *
+ * Client-safe types/constants/helpers live in ./metafields.ts.
  */
 
-export type OwnerType = "PRODUCT" | "COLLECTION" | "CUSTOMER" | "ORDER";
-
-type OwnerConfig = {
-  /** GraphQL connection field on QueryRoot */
-  field: string;
-  /** Field used as the human-readable owner label */
-  labelField: string;
-  /** UI label */
-  label: string;
-};
-
-export const OWNER_CONFIG: Record<OwnerType, OwnerConfig> = {
-  PRODUCT: { field: "products", labelField: "title", label: "Products" },
-  COLLECTION: { field: "collections", labelField: "title", label: "Collections" },
-  CUSTOMER: { field: "customers", labelField: "displayName", label: "Customers" },
-  ORDER: { field: "orders", labelField: "name", label: "Orders" },
-};
-
-export const OWNER_TYPES = Object.keys(OWNER_CONFIG) as OwnerType[];
-
-export function isOwnerType(value: string): value is OwnerType {
-  return value in OWNER_CONFIG;
-}
-
-export type MetafieldRow = {
-  /** Metafield GID */
-  id: string;
-  ownerId: string;
-  ownerLabel: string;
-  namespace: string;
-  key: string;
-  type: string;
-  value: string;
-};
-
-export type MetafieldPage = {
-  rows: MetafieldRow[];
-  hasNextPage: boolean;
-  endCursor: string | null;
-};
+import {
+  OWNER_CONFIG,
+  type OwnerType,
+  type MetafieldPage,
+  type MetafieldRow,
+  type MetafieldSetInput,
+  type SetResult,
+  type MetafieldIdentifier,
+  type DeleteResult,
+} from "./metafields";
 
 // Minimal shape of the Shopify admin GraphQL client from authenticate.admin()
 export type AdminClient = {
@@ -175,21 +147,6 @@ export async function listMetafields(
   };
 }
 
-export type MetafieldSetInput = {
-  ownerId: string;
-  namespace: string;
-  key: string;
-  type: string;
-  value: string;
-};
-
-export type UserError = { field: string[] | null; message: string; code?: string };
-
-export type SetResult = {
-  metafields: Array<{ id: string; namespace: string; key: string; value: string; type: string }>;
-  userErrors: UserError[];
-};
-
 /**
  * Upsert up to 25 metafields atomically (Shopify metafieldsSet constraint).
  * Caller is responsible for chunking larger sets into batches of 25.
@@ -216,17 +173,6 @@ export async function setMetafields(
   });
 }
 
-export type MetafieldIdentifier = {
-  ownerId: string;
-  namespace: string;
-  key: string;
-};
-
-export type DeleteResult = {
-  deletedMetafields: Array<{ ownerId: string; namespace: string; key: string }>;
-  userErrors: UserError[];
-};
-
 /** Delete up to 25 metafields by (ownerId, namespace, key) identifier. */
 export async function deleteMetafields(
   admin: AdminClient,
@@ -248,13 +194,4 @@ export async function deleteMetafields(
     const data = await parseGraphql<{ metafieldsDelete: DeleteResult }>(res);
     return data.metafieldsDelete;
   });
-}
-
-/** Split an array into chunks of `size` (used for the 25-per-request limit). */
-export function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
 }

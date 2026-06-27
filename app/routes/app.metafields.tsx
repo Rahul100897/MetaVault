@@ -9,17 +9,15 @@ import { exportQueue } from "../lib/queue.server";
 import { getPlan, getDailyEditCount } from "../lib/plan.server";
 import { isPro, canBulkDelete, FREE_DAILY_LIMIT } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
+import { listMetafields, setMetafields, deleteMetafields } from "../lib/metafields.server";
 import {
-  listMetafields,
-  setMetafields,
-  deleteMetafields,
   chunk,
   OWNER_CONFIG,
   OWNER_TYPES,
   isOwnerType,
   type MetafieldRow,
   type OwnerType,
-} from "../lib/metafields.server";
+} from "../lib/metafields";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);

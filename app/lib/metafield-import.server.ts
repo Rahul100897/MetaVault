@@ -1,5 +1,5 @@
 import { parseCsv, type CsvRow } from "./csv.server";
-import type { MetafieldSetInput } from "./metafields.server";
+import type { MetafieldSetInput } from "./metafields";
 
 /**
  * Shared CSV import validation, used both for the dry-run preview (in the route

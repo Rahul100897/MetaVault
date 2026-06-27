@@ -4,7 +4,7 @@ import { QUEUE_NAMES, redisConnection, type ExportJobData } from "../lib/queue.s
 import { adminGraphqlClient } from "../lib/admin-graphql.server";
 import { generateCsv, type CsvRow } from "../lib/csv.server";
 import { uploadFile, buildFileKey } from "../lib/r2.server";
-import { OWNER_CONFIG, isOwnerType, type OwnerType } from "../lib/metafields.server";
+import { OWNER_CONFIG, isOwnerType, type OwnerType } from "../lib/metafields";
 
 /**
  * Bulk export pipeline:
