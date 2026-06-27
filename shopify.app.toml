@@ -1,32 +1,38 @@
-# MetaVault — Shopify App Configuration
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = ""
-
+client_id = "5a2865c40f0d0336af7e843686c54236"
 name = "MetaVault"
-
-[access_scopes]
-scopes = "read_metafields,write_metafields,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_products,read_customers,read_orders"
+application_url = "https://mpg-cigarettes-producers-worth.trycloudflare.com"
+embedded = true
 
 [webhooks]
-api_version = "2025-04"
+api_version = "2026-04"
 
   [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
-  topics = ["app/uninstalled"]
 
   [[webhooks.subscriptions]]
-  topics = ["app/scopes_update"]
+  topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
-  # GDPR mandatory compliance webhooks
   [[webhooks.subscriptions]]
   uri = "/webhooks/customers/data_request"
-  compliance_topics = ["customers/data_request"]
+  compliance_topics = [ "customers/data_request" ]
 
   [[webhooks.subscriptions]]
   uri = "/webhooks/customers/redact"
-  compliance_topics = ["customers/redact"]
+  compliance_topics = [ "customers/redact" ]
 
   [[webhooks.subscriptions]]
   uri = "/webhooks/shop/redact"
-  compliance_topics = ["shop/redact"]
+  compliance_topics = [ "shop/redact" ]
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_products,read_customers,read_orders"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ "https://mpg-cigarettes-producers-worth.trycloudflare.com/auth/callback", "https://mpg-cigarettes-producers-worth.trycloudflare.com/auth/shopify/callback", "https://mpg-cigarettes-producers-worth.trycloudflare.com/shopify/auth/callback" ]
