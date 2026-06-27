@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Page, Text, BlockStack, InlineStack, Badge, Button } from "@shopify/polaris";
+import { Page, Text, BlockStack, InlineStack, Badge, Button, Modal } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -12,8 +12,10 @@ import {
   getEntryById,
   createEntry,
   updateEntry,
+  deleteEntry,
   type FieldInput,
 } from "../lib/metaobjects.server";
+import { chunk } from "../lib/metafields";
 import MetaobjectDrawer, { type DrawerMode } from "../components/MetaobjectDrawer";
 import {
   inputKindForType,
@@ -46,6 +48,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionData =
   | { ok: true; intent: "create" | "update"; entry: MetaobjectEntry }
+  | { ok: true; intent: "delete"; deletedIds: string[]; failed: number }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -94,6 +97,44 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
       data: { shopId: session.shop, action: "metaobject_updated", resourceType: type, rowCount: 1 },
     });
     return { ok: true, intent: "update", entry };
+  }
+
+  if (intent === "delete") {
+    const type = String(form.get("type") ?? "");
+    let ids: string[] = [];
+    try {
+      ids = JSON.parse(String(form.get("ids") ?? "[]"));
+    } catch {
+      ids = [];
+    }
+    if (!ids.length) return { ok: false, intent, error: "Nothing to delete" };
+
+    const deletedIds: string[] = [];
+    let failed = 0;
+    for (const batch of chunk(ids, 25)) {
+      const results = await Promise.all(
+        batch.map((id) =>
+          deleteEntry(admin, id)
+            .then((r) => ({ id, ok: !!r.deletedId && r.userErrors.length === 0 }))
+            .catch(() => ({ id, ok: false })),
+        ),
+      );
+      for (const r of results) {
+        if (r.ok) deletedIds.push(r.id);
+        else failed++;
+      }
+    }
+    if (deletedIds.length) {
+      await prisma.activityLog.create({
+        data: {
+          shopId: session.shop,
+          action: "metaobject_deleted",
+          resourceType: type,
+          rowCount: deletedIds.length,
+        },
+      });
+    }
+    return { ok: true, intent: "delete", deletedIds, failed };
   }
 
   return { ok: false, intent, error: `Unknown action: ${intent}` };
@@ -195,6 +236,8 @@ function EntriesSkeleton() {
 export default function MetaobjectsPage() {
   const { definitions, selectedType, entries } = useLoaderData<typeof loader>();
   const entriesFetcher = useFetcher<typeof loader>();
+  const deleteFetcher = useFetcher<typeof action>();
+  const shopify = useAppBridge();
 
   const [activeType, setActiveType] = useState<string | null>(selectedType);
   const [rows, setRows] = useState<MetaobjectEntry[]>(entries?.entries ?? []);
@@ -204,11 +247,19 @@ export default function MetaobjectsPage() {
     { open: false, mode: "edit", entry: null },
   );
 
+  // Selection + delete
+  const [selected, setSelected] = useState<string[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<MetaobjectEntry | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [publishConfirm, setPublishConfirm] = useState<"ACTIVE" | "DRAFT" | null>(null);
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const isDeleting = deleteFetcher.state !== "idle";
+
   const onEdit = (row: MetaobjectEntry) => setDrawer({ open: true, mode: "edit", entry: row });
   const onAdd = () => setDrawer({ open: true, mode: "create", entry: null });
   const onDuplicate = (row: MetaobjectEntry) =>
     setDrawer({ open: true, mode: "duplicate", entry: row });
-  const onDelete = (row: MetaobjectEntry) => console.debug("delete", row.id);
+  const onDelete = (row: MetaobjectEntry) => setDeleteTarget(row);
 
   const onSaved = (entry: MetaobjectEntry, mode: DrawerMode) => {
     setRows((prev) =>
@@ -217,11 +268,48 @@ export default function MetaobjectsPage() {
     setDrawer((d) => ({ ...d, open: false }));
   };
 
+  const toggleRow = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const allSelected = rows.length > 0 && rows.every((r) => selectedSet.has(r.id));
+  const someSelected = selected.length > 0;
+  const toggleAll = () => setSelected(allSelected ? [] : rows.map((r) => r.id));
+  const selectedEntries = useMemo(() => rows.filter((r) => selectedSet.has(r.id)), [rows, selectedSet]);
+
+  const submitDelete = (ids: string[]) =>
+    deleteFetcher.submit(
+      { intent: "delete", type: activeType ?? "", ids: JSON.stringify(ids) },
+      { method: "post" },
+    );
+
+  // React to delete results.
+  useEffect(() => {
+    if (deleteFetcher.state !== "idle" || !deleteFetcher.data) return;
+    const d = deleteFetcher.data;
+    if (d.ok && d.intent === "delete") {
+      const removed = new Set(d.deletedIds);
+      setRows((prev) => prev.filter((r) => !removed.has(r.id)));
+      setSelected((prev) => prev.filter((id) => !removed.has(id)));
+      setDeleteTarget(null);
+      setBulkDeleteOpen(false);
+      if (d.failed) {
+        shopify.toast.show(`Deleted ${d.deletedIds.length}, ${d.failed} failed`, { isError: true });
+      } else {
+        shopify.toast.show(
+          `Deleted ${d.deletedIds.length} ${d.deletedIds.length === 1 ? "entry" : "entries"}`,
+        );
+      }
+    } else if (!d.ok) {
+      shopify.toast.show(d.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteFetcher.state, deleteFetcher.data]);
+
   // When the entries fetcher returns, swap the right panel.
   useEffect(() => {
     if (entriesFetcher.state === "idle" && entriesFetcher.data) {
       setActiveType(entriesFetcher.data.selectedType);
       setRows(entriesFetcher.data.entries?.entries ?? []);
+      setSelected([]);
     }
   }, [entriesFetcher.state, entriesFetcher.data]);
 
@@ -234,6 +322,7 @@ export default function MetaobjectsPage() {
     if (type === activeType) return;
     setActiveType(type);
     setRows([]);
+    setSelected([]);
     entriesFetcher.load(`/app/metaobjects?type=${encodeURIComponent(type)}`);
   };
 
@@ -243,6 +332,7 @@ export default function MetaobjectsPage() {
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .mo-def:hover { background: #F1F1FF; }
         .mo-row:hover { background: #EEF2FF !important; }
+        .mo-check { width: 16px; height: 16px; cursor: pointer; accent-color: #6366F1; }
       `}</style>
 
       <BlockStack gap="500">
@@ -356,12 +446,61 @@ export default function MetaobjectsPage() {
                   </InlineStack>
                 </div>
 
+                {someSelected && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "10px 24px",
+                      background: "linear-gradient(135deg, #0A0F1E, #1E1B4B)",
+                    }}
+                  >
+                    <InlineStack gap="300" blockAlign="center">
+                      <span
+                        style={{
+                          background: "#6366F1",
+                          color: "#FFFFFF",
+                          borderRadius: "20px",
+                          padding: "2px 10px",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {selected.length} selected
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelected([])}
+                        style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: "13px", cursor: "pointer" }}
+                      >
+                        Clear
+                      </button>
+                    </InlineStack>
+                    <InlineStack gap="200">
+                      {definition.publishable && (
+                        <>
+                          <Button onClick={() => setPublishConfirm("ACTIVE")}>Publish</Button>
+                          <Button onClick={() => setPublishConfirm("DRAFT")}>Unpublish</Button>
+                        </>
+                      )}
+                      <Button variant="primary" tone="critical" loading={isDeleting} onClick={() => setBulkDeleteOpen(true)}>
+                        Delete selected
+                      </Button>
+                    </InlineStack>
+                  </div>
+                )}
+
                 {isLoadingEntries ? (
                   <EntriesSkeleton />
                 ) : (
                   <EntriesTable
                     definition={definition}
                     rows={rows}
+                    selectedSet={selectedSet}
+                    allSelected={allSelected}
+                    onToggleRow={toggleRow}
+                    onToggleAll={toggleAll}
                     onEdit={onEdit}
                     onDuplicate={onDuplicate}
                     onDelete={onDelete}
@@ -383,6 +522,70 @@ export default function MetaobjectsPage() {
           onSaved={onSaved}
         />
       )}
+
+      {/* Single delete confirmation */}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete this entry?"
+        primaryAction={{
+          content: "Delete entry",
+          destructive: true,
+          loading: isDeleting,
+          onAction: () => {
+            if (deleteTarget) submitDelete([deleteTarget.id]);
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setDeleteTarget(null) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              You're about to permanently delete{" "}
+              <Text as="span" fontWeight="semibold">
+                {deleteTarget?.handle}
+              </Text>
+              .
+            </Text>
+            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: "8px", padding: "12px 14px" }}>
+              <Text as="p" variant="bodySm" tone="critical">
+                This cannot be undone. The metaobject entry will be removed from Shopify.
+              </Text>
+            </div>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Bulk delete confirmation */}
+      <Modal
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        title={`Delete ${selected.length} ${selected.length === 1 ? "entry" : "entries"}?`}
+        primaryAction={{
+          content: `Delete ${selected.length}`,
+          destructive: true,
+          loading: isDeleting,
+          onAction: () => submitDelete(selectedEntries.map((e) => e.id)),
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setBulkDeleteOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              You're about to permanently delete{" "}
+              <Text as="span" fontWeight="semibold">
+                {selected.length} selected {selected.length === 1 ? "entry" : "entries"}
+              </Text>
+              .
+            </Text>
+            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: "8px", padding: "12px 14px" }}>
+              <Text as="p" variant="bodySm" tone="critical">
+                This cannot be undone. Deletions run in batches of 25.
+              </Text>
+            </div>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
@@ -529,12 +732,20 @@ function RowActionButton({
 function EntriesTable({
   definition,
   rows,
+  selectedSet,
+  allSelected,
+  onToggleRow,
+  onToggleAll,
   onEdit,
   onDuplicate,
   onDelete,
 }: {
   definition: MetaobjectDefinitionSummary;
   rows: MetaobjectEntry[];
+  selectedSet: Set<string>;
+  allSelected: boolean;
+  onToggleRow: (id: string) => void;
+  onToggleAll: () => void;
   onEdit: (row: MetaobjectEntry) => void;
   onDuplicate: (row: MetaobjectEntry) => void;
   onDelete: (row: MetaobjectEntry) => void;
@@ -542,8 +753,9 @@ function EntriesTable({
   const fields = definition.fieldDefinitions;
   const showStatus = definition.publishable;
 
-  // grid: handle | each field | [status] | actions
+  // grid: checkbox | handle | each field | [status] | actions
   const gridColumns = [
+    "36px",
     "minmax(140px, 180px)",
     ...fields.map(() => "minmax(130px, 1fr)"),
     ...(showStatus ? ["110px"] : []),
@@ -581,6 +793,18 @@ function EntriesTable({
             zIndex: 1,
           }}
         >
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              aria-label="Select all entries"
+              className="mo-check"
+              checked={allSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = !allSelected && rows.some((r) => selectedSet.has(r.id));
+              }}
+              onChange={onToggleAll}
+            />
+          </div>
           <Text as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
             Handle
           </Text>
@@ -609,11 +833,20 @@ function EntriesTable({
               gridTemplateColumns: gridColumns,
               gap: "16px",
               padding: "12px 24px",
-              background: idx % 2 === 0 ? "#FFFFFF" : "#F8F9FF",
+              background: selectedSet.has(row.id) ? "#EEF0FF" : idx % 2 === 0 ? "#FFFFFF" : "#F8F9FF",
               borderBottom: "1px solid #F3F4F6",
               alignItems: "center",
             }}
           >
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                aria-label={`Select ${row.handle}`}
+                className="mo-check"
+                checked={selectedSet.has(row.id)}
+                onChange={() => onToggleRow(row.id)}
+              />
+            </div>
             <span style={HANDLE_PILL}>{row.handle}</span>
             {fields.map((f) => (
               <FieldCell key={f.key} field={row.fields[f.key]} def={f} />
