@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
 import { format, parseISO } from "date-fns";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Page, Text, BlockStack, InlineStack, Badge } from "@shopify/polaris";
+import { Page, Text, BlockStack, InlineStack, Badge, Button } from "@shopify/polaris";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { listDefinitions, listEntries } from "../lib/metaobjects.server";
+import prisma from "../db.server";
+import {
+  listDefinitions,
+  listEntries,
+  getEntryById,
+  createEntry,
+  updateEntry,
+  type FieldInput,
+} from "../lib/metaobjects.server";
+import MetaobjectDrawer, { type DrawerMode } from "../components/MetaobjectDrawer";
 import {
   inputKindForType,
   truncate,
@@ -32,6 +42,61 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   return { definitions, selectedType, entries };
+};
+
+type ActionData =
+  | { ok: true; intent: "create" | "update"; entry: MetaobjectEntry }
+  | { ok: false; intent: string; error: string };
+
+export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
+  const { admin, session } = await authenticate.admin(request);
+  const form = await request.formData();
+  const intent = String(form.get("intent") ?? "");
+
+  function parseFields(): FieldInput[] {
+    try {
+      const arr = JSON.parse(String(form.get("fields") ?? "[]")) as FieldInput[];
+      return arr.filter((f) => f && typeof f.key === "string");
+    } catch {
+      return [];
+    }
+  }
+
+  const statusRaw = String(form.get("status") ?? "");
+  const status = statusRaw === "ACTIVE" || statusRaw === "DRAFT" ? statusRaw : undefined;
+
+  if (intent === "create") {
+    const type = String(form.get("type") ?? "");
+    const handle = String(form.get("handle") ?? "").trim() || undefined;
+    const result = await createEntry(admin, { type, handle, fields: parseFields(), status });
+    if (result.userErrors.length || !result.entry) {
+      return { ok: false, intent, error: result.userErrors[0]?.message ?? "Create failed" };
+    }
+    const entry = await getEntryById(admin, result.entry.id);
+    if (!entry) return { ok: false, intent, error: "Created but could not reload entry" };
+    await prisma.activityLog.create({
+      data: { shopId: session.shop, action: "metaobject_created", resourceType: type, rowCount: 1 },
+    });
+    return { ok: true, intent: "create", entry };
+  }
+
+  if (intent === "update") {
+    const id = String(form.get("id") ?? "");
+    const type = String(form.get("type") ?? "");
+    const handle = String(form.get("handle") ?? "").trim();
+    const result = await updateEntry(admin, { id, handle, fields: parseFields(), status });
+    if (result.userErrors.length || !result.entry) {
+      return { ok: false, intent, error: result.userErrors[0]?.message ?? "Update failed" };
+    }
+    const entry = await getEntryById(admin, id);
+    if (!entry) return { ok: false, intent, error: "Updated but could not reload entry" };
+    await prisma.activityLog.create({
+      data: { shopId: session.shop, action: "metaobject_updated", resourceType: type, rowCount: 1 },
+    });
+    return { ok: true, intent: "update", entry };
+  }
+
+  return { ok: false, intent, error: `Unknown action: ${intent}` };
 };
 
 // ---------------------------------------------------------------------------
@@ -134,10 +199,21 @@ export default function MetaobjectsPage() {
   const [activeType, setActiveType] = useState<string | null>(selectedType);
   const [rows, setRows] = useState<MetaobjectEntry[]>(entries?.entries ?? []);
 
-  // Row action handlers (drawer + delete wired in Tasks 3–6).
-  const onEdit = (row: MetaobjectEntry) => console.debug("edit", row.id);
+  // Editor drawer (edit / create / duplicate)
+  const [drawer, setDrawer] = useState<{ open: boolean; mode: DrawerMode; entry: MetaobjectEntry | null }>(
+    { open: false, mode: "edit", entry: null },
+  );
+
+  const onEdit = (row: MetaobjectEntry) => setDrawer({ open: true, mode: "edit", entry: row });
   const onDuplicate = (row: MetaobjectEntry) => console.debug("duplicate", row.id);
   const onDelete = (row: MetaobjectEntry) => console.debug("delete", row.id);
+
+  const onSaved = (entry: MetaobjectEntry, mode: DrawerMode) => {
+    setRows((prev) =>
+      mode === "edit" ? prev.map((r) => (r.id === entry.id ? entry : r)) : [entry, ...prev],
+    );
+    setDrawer((d) => ({ ...d, open: false }));
+  };
 
   // When the entries fetcher returns, swap the right panel.
   useEffect(() => {
@@ -289,6 +365,17 @@ export default function MetaobjectsPage() {
           </section>
         </div>
       </BlockStack>
+
+      {definition && (
+        <MetaobjectDrawer
+          open={drawer.open}
+          mode={drawer.mode}
+          definition={definition}
+          entry={drawer.entry}
+          onClose={() => setDrawer((d) => ({ ...d, open: false }))}
+          onSaved={onSaved}
+        />
+      )}
     </Page>
   );
 }

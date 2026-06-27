@@ -135,6 +135,38 @@ function mapField(f: RawField): MetaobjectFieldValue {
   return out;
 }
 
+// Shared selection so list + single fetch map identically.
+const ENTRY_NODE_FIELDS = `
+  id
+  handle
+  displayName
+  updatedAt
+  capabilities { publishable { status } }
+  fields {
+    key
+    value
+    type
+    reference {
+      __typename
+      ... on Metaobject { handle displayName }
+      ... on MediaImage { image { url } alt }
+      ... on GenericFile { url }
+    }
+  }`;
+
+function mapEntry(n: RawEntry): MetaobjectEntry {
+  const fields: Record<string, MetaobjectFieldValue> = {};
+  for (const f of n.fields) fields[f.key] = mapField(f);
+  return {
+    id: n.id,
+    handle: n.handle,
+    displayName: n.displayName,
+    status: n.capabilities?.publishable?.status ?? null,
+    updatedAt: n.updatedAt,
+    fields,
+  };
+}
+
 export async function listEntries(
   admin: AdminClient,
   { type, first = 50, after = null }: { type: string; first?: number; after?: string | null },
@@ -143,48 +175,30 @@ export async function listEntries(
     query MetaobjectEntries($type: String!, $first: Int!, $after: String) {
       metaobjects(type: $type, first: $first, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          handle
-          displayName
-          updatedAt
-          capabilities { publishable { status } }
-          fields {
-            key
-            value
-            type
-            reference {
-              __typename
-              ... on Metaobject { handle displayName }
-              ... on MediaImage { image { url } alt }
-              ... on GenericFile { url }
-            }
-          }
-        }
+        nodes { ${ENTRY_NODE_FIELDS} }
       }
     }`;
   const data = await graphqlRequest<{
     metaobjects: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: RawEntry[] };
   }>(admin, query, { type, first, after });
 
-  const entries: MetaobjectEntry[] = data.metaobjects.nodes.map((n) => {
-    const fields: Record<string, MetaobjectFieldValue> = {};
-    for (const f of n.fields) fields[f.key] = mapField(f);
-    return {
-      id: n.id,
-      handle: n.handle,
-      displayName: n.displayName,
-      status: n.capabilities?.publishable?.status ?? null,
-      updatedAt: n.updatedAt,
-      fields,
-    };
-  });
-
   return {
-    entries,
+    entries: data.metaobjects.nodes.map(mapEntry),
     hasNextPage: data.metaobjects.pageInfo.hasNextPage,
     endCursor: data.metaobjects.pageInfo.endCursor,
   };
+}
+
+export async function getEntryById(
+  admin: AdminClient,
+  id: string,
+): Promise<MetaobjectEntry | null> {
+  const query = `#graphql
+    query MetaobjectById($id: ID!) {
+      metaobject(id: $id) { ${ENTRY_NODE_FIELDS} }
+    }`;
+  const data = await graphqlRequest<{ metaobject: RawEntry | null }>(admin, query, { id });
+  return data.metaobject ? mapEntry(data.metaobject) : null;
 }
 
 // --- Mutations -------------------------------------------------------------
