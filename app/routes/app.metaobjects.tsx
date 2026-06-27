@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
+import { format, parseISO } from "date-fns";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Page, Text, BlockStack, InlineStack, Badge, Button } from "@shopify/polaris";
+import { Page, Text, BlockStack, InlineStack, Badge } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { listDefinitions, listEntries } from "../lib/metaobjects.server";
-import type {
-  MetaobjectDefinitionSummary,
-  MetaobjectEntry,
-  MetaobjectPage,
+import {
+  inputKindForType,
+  truncate,
+  type MetaobjectDefinitionSummary,
+  type MetaobjectEntry,
+  type MetaobjectFieldValue,
+  type MetaobjectPage,
+  type MoFieldDef,
 } from "../lib/metaobjects";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -128,6 +133,11 @@ export default function MetaobjectsPage() {
 
   const [activeType, setActiveType] = useState<string | null>(selectedType);
   const [rows, setRows] = useState<MetaobjectEntry[]>(entries?.entries ?? []);
+
+  // Row action handlers (drawer + delete wired in Tasks 3–6).
+  const onEdit = (row: MetaobjectEntry) => console.debug("edit", row.id);
+  const onDuplicate = (row: MetaobjectEntry) => console.debug("duplicate", row.id);
+  const onDelete = (row: MetaobjectEntry) => console.debug("delete", row.id);
 
   // When the entries fetcher returns, swap the right panel.
   useEffect(() => {
@@ -266,7 +276,13 @@ export default function MetaobjectsPage() {
                 {isLoadingEntries ? (
                   <EntriesSkeleton />
                 ) : (
-                  <EntriesTable definition={definition} rows={rows} />
+                  <EntriesTable
+                    definition={definition}
+                    rows={rows}
+                    onEdit={onEdit}
+                    onDuplicate={onDuplicate}
+                    onDelete={onDelete}
+                  />
                 )}
               </>
             )}
@@ -277,55 +293,267 @@ export default function MetaobjectsPage() {
   );
 }
 
-// Placeholder table (expanded with typed columns + actions in Task 2).
+const HANDLE_PILL: React.CSSProperties = {
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontSize: "12px",
+  background: "#F1F1F4",
+  color: "#4B5563",
+  padding: "2px 8px",
+  borderRadius: "6px",
+  whiteSpace: "nowrap",
+};
+
+function FieldCell({ field, def }: { field: MetaobjectFieldValue | undefined; def: MoFieldDef }) {
+  const kind = inputKindForType(def.type);
+  const value = field?.value ?? "";
+
+  if (!field || value === "") {
+    return (
+      <Text as="span" variant="bodySm" tone="disabled">
+        —
+      </Text>
+    );
+  }
+
+  switch (kind) {
+    case "number":
+      return (
+        <span
+          style={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: "13px",
+            display: "block",
+            textAlign: "right",
+          }}
+        >
+          {value}
+        </span>
+      );
+    case "boolean":
+      return value === "true" ? (
+        <Badge tone="success">Yes</Badge>
+      ) : (
+        <Badge>No</Badge>
+      );
+    case "date":
+    case "datetime":
+      return (
+        <Text as="span" variant="bodySm">
+          {formatDateValue(value, kind)}
+        </Text>
+      );
+    case "url":
+      return (
+        <a
+          href={value}
+          target="_blank"
+          rel="noreferrer"
+          style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#6366F1" }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path d="M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l1-1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span style={{ fontSize: "13px" }}>{truncate(value, 28)}</span>
+        </a>
+      );
+    case "file":
+      return (
+        <InlineStack gap="150" blockAlign="center">
+          {field.thumbnailUrl ? (
+            <img
+              src={field.thumbnailUrl}
+              alt={field.fileName ?? ""}
+              style={{ width: "24px", height: "24px", borderRadius: "4px", objectFit: "cover" }}
+            />
+          ) : (
+            <span style={{ ...HANDLE_PILL, padding: "2px 6px" }}>file</span>
+          )}
+          <Text as="span" variant="bodySm" tone="subdued">
+            {truncate(field.fileName ?? field.fileUrl ?? "file", 24)}
+          </Text>
+        </InlineStack>
+      );
+    case "metaobject":
+      return (
+        <Text as="span" variant="bodySm">
+          {field.refDisplay ?? truncate(value, 40)}
+        </Text>
+      );
+    default:
+      return (
+        <Text as="span" variant="bodySm" tone="subdued">
+          {truncate(value, 40)}
+        </Text>
+      );
+  }
+}
+
+function formatDateValue(value: string, kind: "date" | "datetime"): string {
+  try {
+    const d = parseISO(value);
+    return format(d, kind === "datetime" ? "MMM d, yyyy HH:mm" : "MMM d, yyyy");
+  } catch {
+    return value;
+  }
+}
+
+function RowActionButton({
+  label,
+  color,
+  onClick,
+  children,
+}: {
+  label: string;
+  color: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      style={{
+        width: "28px",
+        height: "28px",
+        borderRadius: "6px",
+        border: "none",
+        background: "transparent",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        color,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function EntriesTable({
   definition,
   rows,
+  onEdit,
+  onDuplicate,
+  onDelete,
 }: {
   definition: MetaobjectDefinitionSummary;
   rows: MetaobjectEntry[];
+  onEdit: (row: MetaobjectEntry) => void;
+  onDuplicate: (row: MetaobjectEntry) => void;
+  onDelete: (row: MetaobjectEntry) => void;
 }) {
+  const fields = definition.fieldDefinitions;
+  const showStatus = definition.publishable;
+
+  // grid: handle | each field | [status] | actions
+  const gridColumns = [
+    "minmax(140px, 180px)",
+    ...fields.map(() => "minmax(130px, 1fr)"),
+    ...(showStatus ? ["110px"] : []),
+    "118px",
+  ].join(" ");
+
   if (rows.length === 0) {
     return (
       <div style={{ padding: "64px 24px", textAlign: "center" }}>
-        <Text as="p" variant="bodyMd" tone="subdued">
-          No entries for {definition.name} yet.
-        </Text>
+        <BlockStack gap="100" inlineAlign="center">
+          <Text as="p" variant="headingSm">
+            No entries yet
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {definition.name} has no entries. Add one to get started.
+          </Text>
+        </BlockStack>
       </div>
     );
   }
+
   return (
-    <div>
-      {rows.map((row, idx) => (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: "fit-content" }}>
+        {/* Header */}
         <div
-          key={row.id}
-          className="mo-row"
           style={{
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: gridColumns,
             gap: "16px",
             padding: "12px 24px",
-            background: idx % 2 === 0 ? "#FFFFFF" : "#F8F9FF",
-            borderBottom: "1px solid #F3F4F6",
-            alignItems: "center",
+            background: "#0A0F1E",
+            position: "sticky",
+            top: 0,
+            zIndex: 1,
           }}
         >
-          <span
-            style={{
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-              fontSize: "12px",
-              background: "#F1F1F4",
-              color: "#4B5563",
-              padding: "2px 8px",
-              borderRadius: "6px",
-            }}
-          >
-            {row.handle}
-          </span>
-          <Text as="span" variant="bodySm">
-            {row.displayName}
+          <Text as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
+            Handle
+          </Text>
+          {fields.map((f) => (
+            <Text key={f.key} as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
+              {f.name}
+            </Text>
+          ))}
+          {showStatus && (
+            <Text as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
+              Status
+            </Text>
+          )}
+          <Text as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
+            Actions
           </Text>
         </div>
-      ))}
+
+        {/* Rows */}
+        {rows.map((row, idx) => (
+          <div
+            key={row.id}
+            className="mo-row"
+            style={{
+              display: "grid",
+              gridTemplateColumns: gridColumns,
+              gap: "16px",
+              padding: "12px 24px",
+              background: idx % 2 === 0 ? "#FFFFFF" : "#F8F9FF",
+              borderBottom: "1px solid #F3F4F6",
+              alignItems: "center",
+            }}
+          >
+            <span style={HANDLE_PILL}>{row.handle}</span>
+            {fields.map((f) => (
+              <FieldCell key={f.key} field={row.fields[f.key]} def={f} />
+            ))}
+            {showStatus && (
+              <div>
+                {row.status === "ACTIVE" ? (
+                  <Badge tone="success">Active</Badge>
+                ) : (
+                  <Badge>Draft</Badge>
+                )}
+              </div>
+            )}
+            <InlineStack gap="050">
+              <RowActionButton label="Edit" color="#6366F1" onClick={() => onEdit(row)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </RowActionButton>
+              <RowActionButton label="Duplicate" color="#6B7280" onClick={() => onDuplicate(row)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                  <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+                  <path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </RowActionButton>
+              <RowActionButton label="Delete" color="#9CA3AF" onClick={() => onDelete(row)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </RowActionButton>
+            </InlineStack>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
