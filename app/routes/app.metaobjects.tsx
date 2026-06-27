@@ -67,6 +67,7 @@ type ActionData =
       errors: Array<{ line: number; handle: string; message: string }>;
     }
   | { ok: true; intent: "import-execute"; jobId: string }
+  | { ok: true; intent: "publish"; status: "ACTIVE" | "DRAFT"; updatedIds: string[]; failed: number }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -153,6 +154,45 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
       });
     }
     return { ok: true, intent: "delete", deletedIds, failed };
+  }
+
+  if (intent === "publish") {
+    const type = String(form.get("type") ?? "");
+    const status = form.get("status") === "DRAFT" ? "DRAFT" : "ACTIVE";
+    let ids: string[] = [];
+    try {
+      ids = JSON.parse(String(form.get("ids") ?? "[]"));
+    } catch {
+      ids = [];
+    }
+    if (!ids.length) return { ok: false, intent, error: "Nothing selected" };
+
+    const updatedIds: string[] = [];
+    let failed = 0;
+    for (const batch of chunk(ids, 25)) {
+      const results = await Promise.all(
+        batch.map((id) =>
+          updateEntry(admin, { id, status })
+            .then((r) => ({ id, ok: !!r.entry && r.userErrors.length === 0 }))
+            .catch(() => ({ id, ok: false })),
+        ),
+      );
+      for (const r of results) {
+        if (r.ok) updatedIds.push(r.id);
+        else failed++;
+      }
+    }
+    if (updatedIds.length) {
+      await prisma.activityLog.create({
+        data: {
+          shopId: session.shop,
+          action: status === "ACTIVE" ? "metaobject_published" : "metaobject_unpublished",
+          resourceType: type,
+          rowCount: updatedIds.length,
+        },
+      });
+    }
+    return { ok: true, intent: "publish", status, updatedIds, failed };
   }
 
   if (intent === "export") {
@@ -347,6 +387,7 @@ export default function MetaobjectsPage() {
   const deleteFetcher = useFetcher<typeof action>();
   const exportFetcher = useFetcher<typeof action>();
   const schemaFetcher = useFetcher<typeof action>();
+  const publishFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
   const [activeType, setActiveType] = useState<string | null>(selectedType);
@@ -391,6 +432,31 @@ export default function MetaobjectsPage() {
       { intent: "delete", type: activeType ?? "", ids: JSON.stringify(ids) },
       { method: "post" },
     );
+
+  const isPublishing = publishFetcher.state !== "idle";
+  const submitPublish = (status: "ACTIVE" | "DRAFT", ids: string[]) =>
+    publishFetcher.submit(
+      { intent: "publish", type: activeType ?? "", status, ids: JSON.stringify(ids) },
+      { method: "post" },
+    );
+
+  // React to publish/unpublish results.
+  useEffect(() => {
+    if (publishFetcher.state !== "idle" || !publishFetcher.data) return;
+    const d = publishFetcher.data;
+    if (d.ok && d.intent === "publish") {
+      const updated = new Set(d.updatedIds);
+      setRows((prev) => prev.map((r) => (updated.has(r.id) ? { ...r, status: d.status } : r)));
+      setSelected([]);
+      setPublishConfirm(null);
+      const verb = d.status === "ACTIVE" ? "Published" : "Unpublished";
+      if (d.failed) shopify.toast.show(`${verb} ${d.updatedIds.length}, ${d.failed} failed`, { isError: true });
+      else shopify.toast.show(`${verb} ${d.updatedIds.length} ${d.updatedIds.length === 1 ? "entry" : "entries"}`);
+    } else if (!d.ok) {
+      shopify.toast.show(d.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishFetcher.state, publishFetcher.data]);
 
   const startExport = () =>
     exportFetcher.submit({ intent: "export", type: activeType ?? "" }, { method: "post" });
@@ -744,6 +810,35 @@ export default function MetaobjectsPage() {
               </Text>
             </div>
           </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Bulk publish / unpublish confirmation */}
+      <Modal
+        open={publishConfirm !== null}
+        onClose={() => setPublishConfirm(null)}
+        title={`${publishConfirm === "DRAFT" ? "Unpublish" : "Publish"} ${selected.length} ${selected.length === 1 ? "entry" : "entries"}?`}
+        primaryAction={{
+          content: publishConfirm === "DRAFT" ? "Unpublish" : "Publish",
+          loading: isPublishing,
+          onAction: () => {
+            if (publishConfirm) submitPublish(publishConfirm, selectedEntries.map((e) => e.id));
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setPublishConfirm(null) }]}
+      >
+        <Modal.Section>
+          <Text as="p" variant="bodyMd">
+            This will set{" "}
+            <Text as="span" fontWeight="semibold">
+              {selected.length} selected {selected.length === 1 ? "entry" : "entries"}
+            </Text>{" "}
+            to{" "}
+            <Text as="span" fontWeight="semibold">
+              {publishConfirm === "DRAFT" ? "Draft" : "Active"}
+            </Text>
+            .
+          </Text>
         </Modal.Section>
       </Modal>
     </Page>

@@ -35,11 +35,11 @@ export async function processMetaobjectImport(data: ImportJobData): Promise<void
     let success = 0;
 
     for (const batch of chunk(rows, 25)) {
-      await Promise.all(
-        batch.map(async (r) => {
+      const outcomes = await Promise.all(
+        batch.map(async (r): Promise<boolean> => {
           if (r.errors.length) {
             failures.push({ line: String(r.line), handle: r.handle, error: r.errors.join("; ") });
-            return;
+            return false;
           }
           try {
             const res = await upsertEntry(admin, { type, handle: r.handle, fields: r.fields });
@@ -49,18 +49,20 @@ export async function processMetaobjectImport(data: ImportJobData): Promise<void
                 handle: r.handle,
                 error: res.userErrors[0]?.message ?? "Upsert failed",
               });
-            } else {
-              success++;
+              return false;
             }
+            return true;
           } catch (err) {
             failures.push({
               line: String(r.line),
               handle: r.handle,
               error: err instanceof Error ? err.message : "Upsert failed",
             });
+            return false;
           }
         }),
       );
+      success += outcomes.filter(Boolean).length;
     }
 
     let errorReportUrl: string | null = null;
