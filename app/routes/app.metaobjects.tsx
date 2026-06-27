@@ -205,6 +205,7 @@ export default function MetaobjectsPage() {
   );
 
   const onEdit = (row: MetaobjectEntry) => setDrawer({ open: true, mode: "edit", entry: row });
+  const onAdd = () => setDrawer({ open: true, mode: "create", entry: null });
   const onDuplicate = (row: MetaobjectEntry) => console.debug("duplicate", row.id);
   const onDelete = (row: MetaobjectEntry) => console.debug("delete", row.id);
 
@@ -346,6 +347,11 @@ export default function MetaobjectsPage() {
                         type: {definition.type} · {definition.entryCount} entries
                       </Text>
                     </BlockStack>
+                    <InlineStack gap="200">
+                      <Button variant="primary" onClick={onAdd}>
+                        Add entry
+                      </Button>
+                    </InlineStack>
                   </InlineStack>
                 </div>
 
