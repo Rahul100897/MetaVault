@@ -22,7 +22,7 @@ type UnifiedJob = {
 };
 
 async function signSafe(key: string | null): Promise<string | null> {
-  if (!key || !process.env.R2_ENDPOINT) return null;
+  if (!key) return null;
   try {
     return await getDownloadUrl(key, 3600);
   } catch {
