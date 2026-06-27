@@ -37,6 +37,7 @@
     "@shopify/shopify-app-remix": "^4.1.0",
     "@shopify/shopify-app-session-storage-prisma": "^8.0.0",
     "bullmq": "^5.79.1",
+    "date-fns": "^4.4.0",
     "ioredis": "^5.11.1",
     "isbot": "^5.1.0",
     "prisma": "^6.2.1",
