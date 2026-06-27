@@ -13,9 +13,11 @@ import {
   createEntry,
   updateEntry,
   deleteEntry,
+  getDefinitionByType,
   type FieldInput,
 } from "../lib/metaobjects.server";
 import { chunk } from "../lib/metafields";
+import { exportQueue } from "../lib/queue.server";
 import MetaobjectDrawer, { type DrawerMode } from "../components/MetaobjectDrawer";
 import {
   inputKindForType,
@@ -49,6 +51,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 type ActionData =
   | { ok: true; intent: "create" | "update"; entry: MetaobjectEntry }
   | { ok: true; intent: "delete"; deletedIds: string[]; failed: number }
+  | { ok: true; intent: "export"; jobId: string }
+  | { ok: true; intent: "export-schema"; filename: string; json: string }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -135,6 +139,34 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
       });
     }
     return { ok: true, intent: "delete", deletedIds, failed };
+  }
+
+  if (intent === "export") {
+    const type = String(form.get("type") ?? "");
+    const job = await prisma.exportJob.create({
+      data: { shopId: session.shop, type: "metaobjects", status: "queued" },
+    });
+    await exportQueue.add("export-metaobjects", {
+      jobId: job.id,
+      shopId: session.shop,
+      shopDomain: session.shop,
+      accessToken: String(session.accessToken ?? ""),
+      type: "metaobjects",
+      resourceType: type,
+    });
+    return { ok: true, intent: "export", jobId: job.id };
+  }
+
+  if (intent === "export-schema") {
+    const type = String(form.get("type") ?? "");
+    const def = await getDefinitionByType(admin, type);
+    const date = new Date().toISOString().slice(0, 10);
+    return {
+      ok: true,
+      intent: "export-schema",
+      filename: `metavault-definition-${type}-${date}.json`,
+      json: JSON.stringify(def, null, 2),
+    };
   }
 
   return { ok: false, intent, error: `Unknown action: ${intent}` };
@@ -237,6 +269,8 @@ export default function MetaobjectsPage() {
   const { definitions, selectedType, entries } = useLoaderData<typeof loader>();
   const entriesFetcher = useFetcher<typeof loader>();
   const deleteFetcher = useFetcher<typeof action>();
+  const exportFetcher = useFetcher<typeof action>();
+  const schemaFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
   const [activeType, setActiveType] = useState<string | null>(selectedType);
@@ -280,6 +314,39 @@ export default function MetaobjectsPage() {
       { intent: "delete", type: activeType ?? "", ids: JSON.stringify(ids) },
       { method: "post" },
     );
+
+  const startExport = () =>
+    exportFetcher.submit({ intent: "export", type: activeType ?? "" }, { method: "post" });
+  const startSchemaExport = () =>
+    schemaFetcher.submit({ intent: "export-schema", type: activeType ?? "" }, { method: "post" });
+
+  // Export-CSV trigger result.
+  useEffect(() => {
+    if (exportFetcher.state !== "idle" || !exportFetcher.data) return;
+    const d = exportFetcher.data;
+    if (d.ok && d.intent === "export") shopify.toast.show("Export started — track progress in Jobs");
+    else if (!d.ok) shopify.toast.show(d.error, { isError: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportFetcher.state, exportFetcher.data]);
+
+  // Schema JSON download (client-side blob).
+  useEffect(() => {
+    if (schemaFetcher.state !== "idle" || !schemaFetcher.data) return;
+    const d = schemaFetcher.data;
+    if (d.ok && d.intent === "export-schema") {
+      const blob = new Blob([d.json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = d.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      shopify.toast.show("Schema downloaded");
+    } else if (!d.ok) {
+      shopify.toast.show(d.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaFetcher.state, schemaFetcher.data]);
 
   // React to delete results.
   useEffect(() => {
@@ -439,6 +506,12 @@ export default function MetaobjectsPage() {
                       </Text>
                     </BlockStack>
                     <InlineStack gap="200">
+                      <Button onClick={startSchemaExport} loading={schemaFetcher.state !== "idle"}>
+                        Export schema
+                      </Button>
+                      <Button onClick={startExport} loading={exportFetcher.state !== "idle"}>
+                        Export CSV
+                      </Button>
                       <Button variant="primary" onClick={onAdd}>
                         Add entry
                       </Button>

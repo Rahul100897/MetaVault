@@ -86,7 +86,7 @@ export function buildFileKey(
   shopId: string,
   type: string,
   jobId: string,
-  ext: "csv" | "jsonl" = "csv",
+  ext: "csv" | "jsonl" | "json" = "csv",
 ): string {
   return `${shopId}/${type}/${jobId}.${ext}`;
 }
