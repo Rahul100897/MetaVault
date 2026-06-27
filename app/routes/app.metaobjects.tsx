@@ -206,7 +206,8 @@ export default function MetaobjectsPage() {
 
   const onEdit = (row: MetaobjectEntry) => setDrawer({ open: true, mode: "edit", entry: row });
   const onAdd = () => setDrawer({ open: true, mode: "create", entry: null });
-  const onDuplicate = (row: MetaobjectEntry) => console.debug("duplicate", row.id);
+  const onDuplicate = (row: MetaobjectEntry) =>
+    setDrawer({ open: true, mode: "duplicate", entry: row });
   const onDelete = (row: MetaobjectEntry) => console.debug("delete", row.id);
 
   const onSaved = (entry: MetaobjectEntry, mode: DrawerMode) => {
