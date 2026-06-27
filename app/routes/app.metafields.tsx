@@ -5,6 +5,7 @@ import { Page, Button, Text, BlockStack, InlineStack, Badge, Modal } from "@shop
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { exportQueue } from "../lib/queue.server";
 import {
   listMetafields,
   setMetafields,
@@ -34,6 +35,7 @@ type DeleteItem = { id: string; ownerId: string; namespace: string; key: string 
 type ActionData =
   | { ok: true; intent: "set"; id: string; value: string }
   | { ok: true; intent: "delete"; deletedIds: string[]; partialError: string | null }
+  | { ok: true; intent: "export"; jobId: string }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -116,6 +118,22 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
       });
     }
     return { ok: true, intent: "delete", deletedIds, partialError };
+  }
+
+  if (intent === "export") {
+    const ownerType = String(formData.get("ownerType") ?? "PRODUCT");
+    const job = await prisma.exportJob.create({
+      data: { shopId: session.shop, type: "metafields", status: "queued" },
+    });
+    await exportQueue.add("export-metafields", {
+      jobId: job.id,
+      shopId: session.shop,
+      shopDomain: session.shop,
+      accessToken: String(session.accessToken ?? ""),
+      type: "metafields",
+      resourceType: ownerType,
+    });
+    return { ok: true, intent: "export", jobId: job.id };
   }
 
   return { ok: false, intent, error: `Unknown action: ${intent}` };
@@ -242,6 +260,7 @@ export default function MetafieldsPage() {
   const loadMore = useFetcher<typeof loader>();
   const editFetcher = useFetcher<typeof action>();
   const deleteFetcher = useFetcher<typeof action>();
+  const exportFetcher = useFetcher<typeof action>();
 
   // Accumulated rows: reset whenever the owner type (i.e. the loader) changes.
   const [rows, setRows] = useState<MetafieldRow[]>(page.rows);
@@ -315,6 +334,22 @@ export default function MetafieldsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deleteFetcher.state, deleteFetcher.data]);
+
+  // React to export-trigger results.
+  useEffect(() => {
+    if (exportFetcher.state !== "idle" || !exportFetcher.data) return;
+    const data = exportFetcher.data;
+    if (data.ok && data.intent === "export") {
+      shopify.toast.show("Export started — track progress in Jobs");
+    } else if (!data.ok) {
+      shopify.toast.show(data.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportFetcher.state, exportFetcher.data]);
+
+  const startExport = () => {
+    exportFetcher.submit({ intent: "export", ownerType }, { method: "post" });
+  };
 
   const submitDelete = (items: MetafieldRow[]) => {
     deleteFetcher.submit(
@@ -456,7 +491,10 @@ export default function MetafieldsPage() {
               </Text>
             </BlockStack>
             <InlineStack gap="200">
-              <Button url="/app/import-export">Import / Export</Button>
+              <Button onClick={startExport} loading={exportFetcher.state !== "idle"}>
+                Export CSV
+              </Button>
+              <Button url="/app/import-export">Import</Button>
             </InlineStack>
           </InlineStack>
         </div>
