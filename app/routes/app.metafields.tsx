@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
-import { Page, Button, Text, BlockStack, InlineStack, Badge } from "@shopify/polaris";
+import { Page, Button, Text, BlockStack, InlineStack, Badge, Modal } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
   listMetafields,
   setMetafields,
+  deleteMetafields,
+  chunk,
   OWNER_CONFIG,
   OWNER_TYPES,
   isOwnerType,
@@ -27,8 +29,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { ownerType, page };
 };
 
+type DeleteItem = { id: string; ownerId: string; namespace: string; key: string };
+
 type ActionData =
   | { ok: true; intent: "set"; id: string; value: string }
+  | { ok: true; intent: "delete"; deletedIds: string[]; partialError: string | null }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -64,6 +69,53 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
     } catch (err) {
       return { ok: false, intent, error: err instanceof Error ? err.message : "Save failed" };
     }
+  }
+
+  if (intent === "delete") {
+    const ownerType = String(formData.get("ownerType") ?? "");
+    let items: DeleteItem[] = [];
+    try {
+      items = JSON.parse(String(formData.get("items") ?? "[]"));
+    } catch {
+      items = [];
+    }
+    if (!items.length) {
+      return { ok: false, intent, error: "Nothing to delete" };
+    }
+
+    const deletedIds: string[] = [];
+    let partialError: string | null = null;
+    try {
+      for (const batch of chunk(items, 25)) {
+        const result = await deleteMetafields(
+          admin,
+          batch.map(({ ownerId, namespace, key }) => ({ ownerId, namespace, key })),
+        );
+        if (result.userErrors.length && !partialError) {
+          partialError = result.userErrors[0].message;
+        }
+        for (const d of result.deletedMetafields) {
+          const match = batch.find(
+            (b) => b.ownerId === d.ownerId && b.namespace === d.namespace && b.key === d.key,
+          );
+          if (match) deletedIds.push(match.id);
+        }
+      }
+    } catch (err) {
+      return { ok: false, intent, error: err instanceof Error ? err.message : "Delete failed" };
+    }
+
+    if (deletedIds.length) {
+      await prisma.activityLog.create({
+        data: {
+          shopId: session.shop,
+          action: "delete",
+          resourceType: ownerType.toLowerCase() || "metafield",
+          rowCount: deletedIds.length,
+        },
+      });
+    }
+    return { ok: true, intent: "delete", deletedIds, partialError };
   }
 
   return { ok: false, intent, error: `Unknown action: ${intent}` };
@@ -110,7 +162,8 @@ function iconBtn(bg: string): React.CSSProperties {
   };
 }
 
-const GRID_COLUMNS = "minmax(160px, 1.4fr) minmax(120px, 1fr) minmax(120px, 1fr) 180px minmax(200px, 2fr)";
+const GRID_COLUMNS =
+  "minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 170px minmax(200px, 2fr) 52px";
 
 function TableSkeleton() {
   return (
@@ -127,7 +180,7 @@ function TableSkeleton() {
             background: i % 2 === 0 ? "#FFFFFF" : "#FAFAFB",
           }}
         >
-          {[60, 50, 70, 40, 90].map((w, j) => (
+          {[60, 50, 70, 40, 90, 30].map((w, j) => (
             <div
               key={j}
               style={{
@@ -188,6 +241,7 @@ export default function MetafieldsPage() {
   const shopify = useAppBridge();
   const loadMore = useFetcher<typeof loader>();
   const editFetcher = useFetcher<typeof action>();
+  const deleteFetcher = useFetcher<typeof action>();
 
   // Accumulated rows: reset whenever the owner type (i.e. the loader) changes.
   const [rows, setRows] = useState<MetafieldRow[]>(page.rows);
@@ -200,6 +254,12 @@ export default function MetafieldsPage() {
   const [draft, setDraft] = useState("");
   // Previous values for optimistic rollback, keyed by metafield id.
   const rollbackRef = useRef<Record<string, string>>({});
+
+  // Single-row delete target (Task 3). null = modal closed.
+  const [deleteTarget, setDeleteTarget] = useState<MetafieldRow | null>(null);
+  // Bulk selection (Task 4): selected metafield ids.
+  const [selected, setSelected] = useState<string[]>([]);
+  const isDeleting = deleteFetcher.state !== "idle";
 
   useEffect(() => {
     setRows(page.rows);
@@ -229,6 +289,49 @@ export default function MetafieldsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editFetcher.state, editFetcher.data]);
+
+  // React to delete results.
+  useEffect(() => {
+    if (deleteFetcher.state !== "idle" || !deleteFetcher.data) return;
+    const data = deleteFetcher.data;
+    if (data.ok && data.intent === "delete") {
+      const removed = new Set(data.deletedIds);
+      setRows((prev) => prev.filter((r) => !removed.has(r.id)));
+      setSelected((prev) => prev.filter((id) => !removed.has(id)));
+      setDeleteTarget(null);
+      if (data.partialError) {
+        shopify.toast.show(
+          `Deleted ${data.deletedIds.length}, some failed: ${data.partialError}`,
+          { isError: true },
+        );
+      } else {
+        shopify.toast.show(
+          `Deleted ${data.deletedIds.length} metafield${data.deletedIds.length === 1 ? "" : "s"}`,
+        );
+      }
+    } else if (!data.ok) {
+      shopify.toast.show(data.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteFetcher.state, deleteFetcher.data]);
+
+  const submitDelete = (items: MetafieldRow[]) => {
+    deleteFetcher.submit(
+      {
+        intent: "delete",
+        ownerType,
+        items: JSON.stringify(
+          items.map((r) => ({
+            id: r.id,
+            ownerId: r.ownerId,
+            namespace: r.namespace,
+            key: r.key,
+          })),
+        ),
+      },
+      { method: "post" },
+    );
+  };
 
   const startEdit = (row: MetafieldRow) => {
     setEditingId(row.id);
@@ -307,6 +410,8 @@ export default function MetafieldsPage() {
         .mv-pencil { opacity: 0; transition: opacity 0.12s ease; flex-shrink: 0; }
         .mv-value:hover .mv-pencil { opacity: 1; }
         .mv-edit-input { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #6366F1; font-size: 13px; outline: none; font-family: inherit; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+        .mv-trash:hover { background: #FEE2E2 !important; }
+        .mv-trash:hover svg path { stroke: #DC2626; }
       `}</style>
 
       <BlockStack gap="500">
@@ -399,8 +504,8 @@ export default function MetafieldsPage() {
               zIndex: 2,
             }}
           >
-            {["Owner", "Namespace", "Key", "Type", "Value"].map((h) => (
-              <Text key={h} as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
+            {["Owner", "Namespace", "Key", "Type", "Value", ""].map((h, i) => (
+              <Text key={i} as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
                 {h}
               </Text>
             ))}
@@ -505,6 +610,29 @@ export default function MetafieldsPage() {
                       </svg>
                     </div>
                   )}
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    <button
+                      type="button"
+                      aria-label="Delete metafield"
+                      className="mv-trash"
+                      onClick={() => setDeleteTarget(row)}
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "6px",
+                        border: "none",
+                        background: "transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                        <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               ))}
 
@@ -541,6 +669,51 @@ export default function MetafieldsPage() {
           )}
         </div>
       </BlockStack>
+
+      {/* Single delete confirmation */}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete this metafield?"
+        primaryAction={{
+          content: "Delete metafield",
+          destructive: true,
+          loading: isDeleting,
+          onAction: () => {
+            if (deleteTarget) submitDelete([deleteTarget]);
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setDeleteTarget(null) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              You're about to permanently delete{" "}
+              <Text as="span" fontWeight="semibold">
+                {deleteTarget?.namespace}.{deleteTarget?.key}
+              </Text>{" "}
+              from{" "}
+              <Text as="span" fontWeight="semibold">
+                {deleteTarget?.ownerLabel}
+              </Text>
+              .
+            </Text>
+            <div
+              style={{
+                background: "#FEF2F2",
+                border: "1px solid #FECACA",
+                borderRadius: "8px",
+                padding: "12px 14px",
+              }}
+            >
+              <Text as="p" variant="bodySm" tone="critical">
+                This action cannot be undone. The metafield value will be removed
+                from this resource in Shopify.
+              </Text>
+            </div>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
