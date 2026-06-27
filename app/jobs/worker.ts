@@ -21,6 +21,13 @@ for (const worker of workers) {
     // eslint-disable-next-line no-console
     console.log(`[metavault] job ${job.id} completed`);
   });
+  // Swallow benign Redis socket resets (Railway drops idle sockets; ioredis
+  // auto-reconnects). Surface anything else.
+  worker.on("error", (err) => {
+    if (/ECONNRESET|ETIMEDOUT|ECONNREFUSED|EPIPE/.test(err.message)) return;
+    // eslint-disable-next-line no-console
+    console.error("[metavault] worker error:", err.message);
+  });
 }
 
 async function shutdown() {

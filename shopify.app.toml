@@ -5,6 +5,9 @@ name = "MetaVault"
 application_url = "https://mpg-cigarettes-producers-worth.trycloudflare.com"
 embedded = true
 
+[build]
+automatically_update_urls_on_dev = true
+
 [webhooks]
 api_version = "2026-04"
 
