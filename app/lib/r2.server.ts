@@ -33,6 +33,16 @@ export async function uploadFile(
   return key;
 }
 
+export async function getFileContent(key: string): Promise<string> {
+  const res = await r2Client.send(
+    new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+  );
+  // Body is a stream in Node; transformToString is provided by the SDK.
+  const body = res.Body as { transformToString: () => Promise<string> } | undefined;
+  if (!body?.transformToString) return "";
+  return body.transformToString();
+}
+
 export async function getDownloadUrl(
   key: string,
   expiresInSeconds = 3600,

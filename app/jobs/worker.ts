@@ -5,8 +5,9 @@
  * On Railway this is a dedicated worker service sharing the same Redis/Postgres.
  */
 import { createExportWorker } from "./export.server";
+import { createImportWorker } from "./import.server";
 
-const workers = [createExportWorker()];
+const workers = [createExportWorker(), createImportWorker()];
 
 // eslint-disable-next-line no-console
 console.log(`[metavault] started ${workers.length} worker(s)`);
