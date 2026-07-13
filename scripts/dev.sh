@@ -8,39 +8,32 @@
 # hostname every run. So application_url is always stale on the next start and
 # the embedded app fails to load ("server IP address could not be found").
 #
-# This script launches dev, waits until the quick tunnel exists AND the CLI is
-# watching for changes, then writes the live tunnel into shopify.app.toml. The
-# CLI applies shopify.app.toml changes live ("App config updated" -> "Updated
-# dev preview" -> "Using URL: https://<tunnel>"), so the dashboard URL is
-# corrected automatically. Restores the placeholder on exit to keep git clean.
+# The CLI runs in the FOREGROUND so its interactive UI works (press `p` to open
+# the app, `q` to quit). A background job waits for the quick tunnel, then
+# writes it into shopify.app.toml; the CLI applies toml changes live
+# ("App config updated" -> "Updated dev preview" -> "Using URL: https://<tunnel>").
+# The placeholder is restored on exit to keep git clean.
 #
-# Usage: npm run dev   (then press `p` in the Shopify CLI UI to open the app)
+# Usage: npm run dev   (then press `p` to open the app once you see the ✅ line)
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 TOML="shopify.app.toml"
 PLACEHOLDER="https://example.com"
-DEV_PID=""
-TAIL_PID=""
-LOG="$(mktemp -t mv-dev.XXXXXX)"
+SYNC_PID=""
 
 restore_placeholder() {
   sed -i '' -E "s|^application_url = \".*\"|application_url = \"${PLACEHOLDER}\"|" "$TOML" 2>/dev/null || true
   sed -i '' -E "s|^redirect_urls = \[.*\]|redirect_urls = [ ]|" "$TOML" 2>/dev/null || true
 }
 
-cleanup() {
-  [ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null || true
-  [ -n "$DEV_PID" ] && kill "$DEV_PID" 2>/dev/null || true
-  pkill -f "cloudflared tunnel" 2>/dev/null || true
-  restore_placeholder
-  rm -f "$LOG"
-}
-trap cleanup EXIT INT TERM
-
 set_url() {
   sed -i '' -E "s|^application_url = \".*\"|application_url = \"$1\"|" "$TOML"
+}
+
+set_redirects() {
+  sed -i '' -E "s|^redirect_urls = \[.*\]|redirect_urls = [ \"$1/auth/callback\", \"$1/auth/shopify/callback\", \"$1/shopify/auth/callback\" ]|" "$TOML"
 }
 
 get_tunnel() {
@@ -52,39 +45,39 @@ get_tunnel() {
   curl -s --max-time 5 "http://127.0.0.1:${port}/quicktunnel" 2>/dev/null | grep -oE '[a-z0-9-]+\.trycloudflare\.com'
 }
 
-echo "[dev] starting shopify app dev…"
-shopify app dev "$@" >"$LOG" 2>&1 &
-DEV_PID=$!
-tail -f "$LOG" & TAIL_PID=$!   # stream the CLI UI to this terminal
-
-# Wait until BOTH the tunnel is up AND the CLI is watching for changes, so the
-# toml write is reliably picked up as a live change (this avoids the race where
-# the CLI reads application_url before we've written the tunnel).
-TUNNEL=""
-for _ in $(seq 1 90); do
-  [ -z "$TUNNEL" ] && TUNNEL="$(get_tunnel)"
-  if [ -n "$TUNNEL" ] && grep -q "Ready, watching for changes" "$LOG"; then break; fi
-  kill -0 "$DEV_PID" 2>/dev/null || { echo "[dev] shopify app dev exited early."; exit 1; }
-  sleep 2
-done
-
-if [ -n "$TUNNEL" ]; then
-  echo "[dev] live tunnel: https://${TUNNEL} — syncing into ${TOML}"
-  # Force a real content change (placeholder -> tunnel) so the watcher fires.
-  set_url "$PLACEHOLDER"
-  sleep 1
-  set_url "https://${TUNNEL}"
-  sed -i '' -E "s|^redirect_urls = \[.*\]|redirect_urls = [ \"https://${TUNNEL}/auth/callback\", \"https://${TUNNEL}/auth/shopify/callback\", \"https://${TUNNEL}/shopify/auth/callback\" ]|" "$TOML"
-  # Confirm the CLI applied it.
-  for _ in $(seq 1 12); do
-    if grep -q "Using URL: https://${TUNNEL}" "$LOG"; then
-      echo "[dev] ✅ app is served at https://${TUNNEL} — press 'p' in the CLI UI to open it."
-      break
-    fi
-    sleep 1
+# Runs in the background: detect the tunnel and write it into the toml. Forces a
+# real content change (placeholder -> tunnel) so the CLI's file watcher fires,
+# and does it twice in case the first attempt lands before the watcher is ready.
+sync_tunnel() {
+  local tunnel="" i
+  for i in $(seq 1 90); do
+    tunnel="$(get_tunnel)"
+    [ -n "$tunnel" ] && break
+    sleep 2
   done
-else
-  echo "[dev] ⚠️  couldn't detect a tunnel; the embedded app may load a stale URL."
-fi
+  if [ -z "$tunnel" ]; then
+    printf '\n[dev] ⚠️  no tunnel detected — if the app fails to load, open it from Shopify Admin › Apps.\n'
+    return
+  fi
+  local attempt
+  for attempt in 1 2; do
+    sleep 4
+    set_url "$PLACEHOLDER"; sleep 1
+    set_url "https://${tunnel}"; set_redirects "https://${tunnel}"
+  done
+  printf '\n[dev] ✅ live tunnel synced: https://%s\n[dev]    Press '\''p'\'' to open it (or Shopify Admin › Apps › MetaVault).\n' "$tunnel"
+}
 
-wait "$DEV_PID"
+cleanup() {
+  [ -n "$SYNC_PID" ] && kill "$SYNC_PID" 2>/dev/null || true
+  pkill -f "cloudflared tunnel" 2>/dev/null || true
+  restore_placeholder
+}
+trap cleanup EXIT INT TERM
+
+echo "[dev] starting shopify app dev — the live tunnel will auto-sync shortly…"
+sync_tunnel &
+SYNC_PID=$!
+
+# Foreground so the CLI owns the terminal: `p` (open) and `q` (quit) work.
+shopify app dev "$@"
