@@ -2,11 +2,7 @@
 
 client_id = "5a2865c40f0d0336af7e843686c54236"
 name = "MetaVault"
-# NOTE: do NOT hardcode a trycloudflare URL here — the CLI reuses it statically
-# and the embedded app loads a dead tunnel. This is a placeholder (used for
-# `shopify app deploy` / production); `shopify app dev` overrides it with the
-# live tunnel each run. Set this to the real Railway URL before deploying.
-application_url = "https://metavault.example.com"
+application_url = "https://example.com"
 embedded = true
 
 [build]
@@ -14,14 +10,6 @@ automatically_update_urls_on_dev = true
 
 [webhooks]
 api_version = "2026-04"
-
-  [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
-
-  [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
   uri = "/webhooks/customers/data_request"
@@ -35,6 +23,14 @@ api_version = "2026-04"
   uri = "/webhooks/shop/redact"
   compliance_topics = [ "shop/redact" ]
 
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_products,write_products,read_customers,write_customers,read_orders,write_orders"
@@ -42,4 +38,4 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://metavault.example.com/auth/callback", "https://metavault.example.com/auth/shopify/callback", "https://metavault.example.com/shopify/auth/callback" ]
+redirect_urls = [ ]
