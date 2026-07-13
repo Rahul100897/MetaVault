@@ -2,7 +2,11 @@
 
 client_id = "5a2865c40f0d0336af7e843686c54236"
 name = "MetaVault"
-application_url = "https://mpg-cigarettes-producers-worth.trycloudflare.com"
+# NOTE: do NOT hardcode a trycloudflare URL here — the CLI reuses it statically
+# and the embedded app loads a dead tunnel. This is a placeholder (used for
+# `shopify app deploy` / production); `shopify app dev` overrides it with the
+# live tunnel each run. Set this to the real Railway URL before deploying.
+application_url = "https://metavault.example.com"
 embedded = true
 
 [build]
@@ -38,4 +42,4 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://mpg-cigarettes-producers-worth.trycloudflare.com/auth/callback", "https://mpg-cigarettes-producers-worth.trycloudflare.com/auth/shopify/callback", "https://mpg-cigarettes-producers-worth.trycloudflare.com/shopify/auth/callback" ]
+redirect_urls = [ "https://metavault.example.com/auth/callback", "https://metavault.example.com/auth/shopify/callback", "https://metavault.example.com/shopify/auth/callback" ]
