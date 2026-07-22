@@ -6,8 +6,9 @@
  */
 import { createExportWorker } from "./export.server";
 import { createImportWorker } from "./import.server";
+import { createBackupWorker } from "./backup.server";
 
-const workers = [createExportWorker(), createImportWorker()];
+const workers = [createExportWorker(), createImportWorker(), createBackupWorker()];
 
 // eslint-disable-next-line no-console
 console.log(`[metavault] started ${workers.length} worker(s)`);
