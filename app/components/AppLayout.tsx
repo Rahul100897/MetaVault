@@ -102,6 +102,15 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Liquid Snippets",
+    to: "/app/snippets",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Orphan Cleaner",
     to: "/app/orphans",
     icon: (
