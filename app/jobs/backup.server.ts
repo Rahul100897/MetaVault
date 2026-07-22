@@ -3,9 +3,10 @@ import prisma from "../db.server";
 import { QUEUE_NAMES, redisConnection, type BackupJobData } from "../lib/queue.server";
 import { adminGraphqlClient } from "../lib/admin-graphql.server";
 import { listMetafields, setMetafields } from "../lib/metafields.server";
-import { OWNER_TYPES, chunk, type OwnerType } from "../lib/metafields";
+import { OWNER_CONFIG, OWNER_TYPES, chunk, type OwnerType } from "../lib/metafields";
 import { listDefinitions, listEntries, upsertEntry } from "../lib/metaobjects.server";
 import { uploadFile, getFileContent, buildFileKey } from "../lib/r2.server";
+import { runBulkQuery } from "../lib/bulk.server";
 
 /**
  * Agency backup & restore.
@@ -45,24 +46,98 @@ export type Snapshot = {
 
 type Admin = ReturnType<typeof adminGraphqlClient>;
 
+/** A metafield line from a bulk result: children carry their owner's GID. */
+type BulkMetafieldLine = {
+  id: string;
+  namespace?: string;
+  key?: string;
+  value?: string;
+  type?: string;
+  __parentId?: string;
+};
+
+/**
+ * One bulk query per owner type. Bulk results are flat JSONL: the owner node
+ * arrives on its own line and each of its metafields follows with a
+ * `__parentId` back-reference, which is the ownerId we need for restore.
+ */
+async function collectMetafieldsBulk(
+  admin: Admin,
+  ownerType: OwnerType,
+): Promise<SnapshotMetafield[]> {
+  const cfg = OWNER_CONFIG[ownerType];
+  const query = `
+    {
+      ${cfg.field} {
+        edges {
+          node {
+            id
+            metafields {
+              edges { node { id namespace key value type } }
+            }
+          }
+        }
+      }
+    }`;
+
+  const lines = await runBulkQuery<BulkMetafieldLine>(admin, query);
+  const out: SnapshotMetafield[] = [];
+  for (const line of lines) {
+    // Owner lines have no __parentId; only metafield children do.
+    if (!line.__parentId || !line.namespace || !line.key) continue;
+    out.push({
+      ownerType,
+      ownerId: line.__parentId,
+      namespace: line.namespace,
+      key: line.key,
+      type: line.type ?? "single_line_text_field",
+      value: line.value ?? "",
+    });
+  }
+  return out;
+}
+
+/** Cursor-paginated collection — the fallback when a bulk query isn't usable. */
+async function collectMetafieldsPaged(
+  admin: Admin,
+  ownerType: OwnerType,
+): Promise<SnapshotMetafield[]> {
+  const out: SnapshotMetafield[] = [];
+  let after: string | null = null;
+  do {
+    const page = await listMetafields(admin, { ownerType, first: 50, after });
+    for (const r of page.rows) {
+      out.push({
+        ownerType,
+        ownerId: r.ownerId,
+        namespace: r.namespace,
+        key: r.key,
+        type: r.type,
+        value: r.value,
+      });
+    }
+    after = page.hasNextPage ? page.endCursor : null;
+  } while (after);
+  return out;
+}
+
 async function collectMetafields(admin: Admin): Promise<SnapshotMetafield[]> {
   const out: SnapshotMetafield[] = [];
+  // Sequential, not parallel: a shop may only run one bulk query at a time.
   for (const ownerType of OWNER_TYPES as OwnerType[]) {
-    let after: string | null = null;
-    do {
-      const page = await listMetafields(admin, { ownerType, first: 50, after });
-      for (const r of page.rows) {
-        out.push({
-          ownerType,
-          ownerId: r.ownerId,
-          namespace: r.namespace,
-          key: r.key,
-          type: r.type,
-          value: r.value,
-        });
-      }
-      after = page.hasNextPage ? page.endCursor : null;
-    } while (after);
+    try {
+      out.push(...(await collectMetafieldsBulk(admin, ownerType)));
+    } catch (err) {
+      // Bulk can be unavailable for a resource (e.g. protected customer data
+      // not yet granted). Losing a whole owner type would silently produce an
+      // incomplete snapshot, so fall back to paging it.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[metavault] bulk metafield query failed for ${ownerType}, paging instead:`,
+        err instanceof Error ? err.message : err,
+      );
+      out.push(...(await collectMetafieldsPaged(admin, ownerType)));
+    }
   }
   return out;
 }
@@ -108,12 +183,19 @@ async function runBackup(data: BackupJobData): Promise<void> {
     };
 
     const key = buildFileKey(shopId, "backup", jobId, "json");
-    await uploadFile(key, JSON.stringify(snapshot, null, 2), "application/json");
+    const body = JSON.stringify(snapshot, null, 2);
+    await uploadFile(key, body, "application/json");
 
     const expiresAt = new Date(Date.now() + RETENTION_DAYS * 24 * 60 * 60 * 1000);
     await prisma.backupJob.update({
       where: { id: jobId },
-      data: { status: "completed", fileUrl: key, expiresAt },
+      data: {
+        status: "completed",
+        fileUrl: key,
+        expiresAt,
+        sizeBytes: Buffer.byteLength(body, "utf8"),
+        itemCount: metafields.length + metaobjects.length,
+      },
     });
 
     await prisma.activityLog.create({

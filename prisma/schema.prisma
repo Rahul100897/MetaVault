@@ -62,6 +62,10 @@ model BackupJob {
   shopId    String
   status    String    @default("pending")
   fileUrl   String?
+  /// Size of the snapshot JSON in bytes, shown in the backup history table.
+  sizeBytes Int?
+  /// Metafields + metaobjects captured, used for the snapshot summary.
+  itemCount Int?
   expiresAt DateTime?
   createdAt DateTime  @default(now())
 
