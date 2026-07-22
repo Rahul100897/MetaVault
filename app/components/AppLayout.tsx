@@ -102,6 +102,15 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Cross-store Copy",
+    to: "/app/cross-store",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <path d="M4 7h10M4 7l3-3M4 7l3 3M20 17H10M20 17l-3-3M20 17l-3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Liquid Snippets",
     to: "/app/snippets",
     icon: (
