@@ -79,11 +79,13 @@ export type BackupJobData = {
   shopDomain: string;
   accessToken: string;
   /** Defaults to "backup". */
-  mode?: "backup" | "restore";
-  /** Storage key of the snapshot to restore (mode "restore"). */
+  mode?: "backup" | "restore" | "preview";
+  /** Storage key of the snapshot to read (modes "restore" and "preview"). */
   backupKey?: string;
   /** ImportJob id used to track restore progress (mode "restore"). */
   restoreJobId?: string;
+  /** ImportJob id used to track the diff computation (mode "preview"). */
+  previewJobId?: string;
 };
 
 export { connection as redisConnection };

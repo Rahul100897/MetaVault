@@ -1,12 +1,24 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { Page, Text, BlockStack, InlineStack, Button, Badge, Modal } from "@shopify/polaris";
+import {
+  Page,
+  Text,
+  BlockStack,
+  InlineStack,
+  Button,
+  Badge,
+  Modal,
+  Collapsible,
+  ProgressBar,
+  Spinner,
+} from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { backupQueue } from "../lib/queue.server";
-import { getDownloadUrl } from "../lib/r2.server";
+import { getDownloadUrl, getFileContent } from "../lib/r2.server";
+import type { RestoreDiff, DiffEntry } from "../jobs/restore-diff.server";
 import { getPlan } from "../lib/plan.server";
 import { canBackup } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
@@ -85,7 +97,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 type ActionData =
-  | { ok: true; intent: "backup" | "restore"; id: string }
+  | { ok: true; intent: "backup" | "restore" | "preview"; id: string }
+  | { ok: true; intent: "preview-status"; status: string; diff: RestoreDiff | null }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -97,6 +110,46 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   const plan = await getPlan(shopId);
   if (!canBackup(plan)) {
     return { ok: false, intent, error: "Backup & restore is an Agency feature." };
+  }
+
+  // Step 1 of a restore: queue a diff of the snapshot against the live store.
+  if (intent === "preview") {
+    const backupId = String(form.get("backupId") ?? "");
+    const backup = await prisma.backupJob.findFirst({ where: { id: backupId, shopId } });
+    if (!backup?.fileUrl) {
+      return { ok: false, intent, error: "That backup is not available to restore." };
+    }
+    const previewJob = await prisma.importJob.create({
+      data: { shopId, type: "restore-preview", status: "queued" },
+    });
+    await backupQueue.add("preview-restore", {
+      jobId: backup.id,
+      shopId,
+      shopDomain: shopId,
+      accessToken: String(session.accessToken ?? ""),
+      mode: "preview",
+      backupKey: backup.fileUrl,
+      previewJobId: previewJob.id,
+    });
+    return { ok: true, intent: "preview", id: previewJob.id };
+  }
+
+  if (intent === "preview-status") {
+    const jobId = String(form.get("jobId") ?? "");
+    const job = await prisma.importJob.findFirst({
+      where: { id: jobId, shopId, type: "restore-preview" },
+    });
+    if (!job) return { ok: false, intent, error: "Preview not found." };
+    if (job.status !== "completed" || !job.fileUrl) {
+      return { ok: true, intent: "preview-status", status: job.status, diff: null };
+    }
+    const raw = await getFileContent(job.fileUrl);
+    return {
+      ok: true,
+      intent: "preview-status",
+      status: "completed",
+      diff: raw ? (JSON.parse(raw) as RestoreDiff) : null,
+    };
   }
 
   if (intent === "backup") {
@@ -313,6 +366,109 @@ function CreatePanel({
   );
 }
 
+/** One collapsible bucket of the restore plan. */
+function DiffSection({
+  title,
+  tone,
+  count,
+  entries,
+  description,
+}: {
+  title: string;
+  tone: string;
+  count: number;
+  entries: DiffEntry[];
+  description: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = `diff-${title.replace(/\s+/g, "-").toLowerCase()}`;
+
+  return (
+    <div style={{ border: "1px solid #E5E7EB", borderRadius: "10px", overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={count === 0}
+        aria-expanded={open}
+        aria-controls={id}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+          padding: "12px 14px",
+          background: "#FFFFFF",
+          border: "none",
+          cursor: count === 0 ? "default" : "pointer",
+          textAlign: "left",
+        }}
+      >
+        <InlineStack gap="200" blockAlign="center">
+          <span
+            style={{
+              minWidth: "34px",
+              textAlign: "center",
+              background: `${tone}18`,
+              color: tone,
+              borderRadius: "6px",
+              padding: "2px 8px",
+              fontSize: "13px",
+              fontWeight: 700,
+            }}
+          >
+            {count.toLocaleString()}
+          </span>
+          <BlockStack gap="050">
+            <Text as="span" variant="bodyMd" fontWeight="semibold">
+              {title}
+            </Text>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {description}
+            </Text>
+          </BlockStack>
+        </InlineStack>
+        {count > 0 && (
+          <Text as="span" variant="bodySm" tone="subdued">
+            {open ? "Hide" : "Show"}
+          </Text>
+        )}
+      </button>
+
+      <Collapsible open={open} id={id} transition={{ duration: "150ms" }}>
+        <div style={{ borderTop: "1px solid #F3F4F6", maxHeight: "240px", overflowY: "auto" }}>
+          {entries.map((e, i) => (
+            <div
+              key={`${e.label}-${i}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "12px",
+                padding: "8px 14px",
+                background: i % 2 === 0 ? "#FFFFFF" : "#FAFAFB",
+              }}
+            >
+              <Text as="span" variant="bodySm" truncate>
+                {e.label}
+              </Text>
+              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                {e.detail}
+              </Text>
+            </div>
+          ))}
+          {count > entries.length && (
+            <div style={{ padding: "8px 14px" }}>
+              <Text as="span" variant="bodySm" tone="subdued">
+                …and {(count - entries.length).toLocaleString()} more
+              </Text>
+            </div>
+          )}
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
 export default function BackupsPage() {
   const { allowed, backups, restores, hasActive, lastCompleted } =
     useLoaderData<typeof loader>();
@@ -321,8 +477,12 @@ export default function BackupsPage() {
   const backupFetcher = useFetcher<typeof action>();
   const restoreFetcher = useFetcher<typeof action>();
 
+  const previewFetcher = useFetcher<typeof action>();
+
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<BackupRow | null>(null);
+  const [previewJobId, setPreviewJobId] = useState<string | null>(null);
+  const [diff, setDiff] = useState<RestoreDiff | null>(null);
 
   // Auto-refresh while a backup/restore is in flight.
   useEffect(() => {
@@ -348,13 +508,40 @@ export default function BackupsPage() {
     const d = restoreFetcher.data;
     if (d.ok) {
       shopify.toast.show("Restore started — track progress below");
-      setRestoreTarget(null);
+      closeRestore();
       revalidator.revalidate();
     } else {
       shopify.toast.show(d.error, { isError: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restoreFetcher.state, restoreFetcher.data]);
+
+  // Preview: capture the tracking job id, then the diff once it lands.
+  useEffect(() => {
+    if (previewFetcher.state !== "idle" || !previewFetcher.data) return;
+    const d = previewFetcher.data;
+    if (!d.ok) {
+      shopify.toast.show(d.error, { isError: true });
+      return;
+    }
+    if (d.intent === "preview") setPreviewJobId(d.id);
+    if (d.intent === "preview-status" && d.diff) setDiff(d.diff);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewFetcher.state, previewFetcher.data]);
+
+  // Poll the preview job until its diff is ready.
+  useEffect(() => {
+    if (!previewJobId || diff) return;
+    const poll = () =>
+      previewFetcher.submit(
+        { intent: "preview-status", jobId: previewJobId },
+        { method: "post" },
+      );
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewJobId, diff]);
 
   const startBackup = () => {
     if (!allowed) {
@@ -364,6 +551,21 @@ export default function BackupsPage() {
     backupFetcher.submit({ intent: "backup" }, { method: "post" });
   };
 
+  /** Step 1 — open the modal and queue the diff. */
+  const openRestore = (backup: BackupRow) => {
+    setRestoreTarget(backup);
+    setPreviewJobId(null);
+    setDiff(null);
+    previewFetcher.submit({ intent: "preview", backupId: backup.id }, { method: "post" });
+  };
+
+  function closeRestore() {
+    setRestoreTarget(null);
+    setPreviewJobId(null);
+    setDiff(null);
+  }
+
+  /** Step 2 — the merchant has seen the plan; write it. */
   const confirmRestore = () => {
     if (restoreTarget) {
       restoreFetcher.submit(
@@ -372,6 +574,10 @@ export default function BackupsPage() {
       );
     }
   };
+
+  const activeRestore = restores.find(
+    (r) => r.status === "running" || r.status === "queued",
+  );
 
   const isBackingUp = backupFetcher.state !== "idle";
   const isRestoring = restoreFetcher.state !== "idle";
@@ -421,6 +627,55 @@ export default function BackupsPage() {
 
             {/* Right — history */}
             <BlockStack gap="400">
+              {activeRestore && (
+                <div
+                  style={{
+                    background: "#FFFFFF",
+                    borderRadius: "12px",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                    padding: "18px 20px",
+                    borderLeft: "3px solid #6366F1",
+                  }}
+                >
+                  <BlockStack gap="200">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">
+                        Restore in progress
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {activeRestore.totalRows > 0
+                          ? `${(
+                              activeRestore.successRows + activeRestore.failedRows
+                            ).toLocaleString()} of ${activeRestore.totalRows.toLocaleString()}`
+                          : "Preparing…"}
+                      </Text>
+                    </InlineStack>
+                    <ProgressBar
+                      progress={
+                        activeRestore.totalRows > 0
+                          ? Math.min(
+                              100,
+                              Math.round(
+                                ((activeRestore.successRows + activeRestore.failedRows) /
+                                  activeRestore.totalRows) *
+                                  100,
+                              ),
+                            )
+                          : 0
+                      }
+                      size="small"
+                      tone="primary"
+                    />
+                    {activeRestore.failedRows > 0 && (
+                      <Text as="p" variant="bodySm" tone="critical">
+                        {activeRestore.failedRows.toLocaleString()} item
+                        {activeRestore.failedRows === 1 ? "" : "s"} could not be written.
+                      </Text>
+                    )}
+                  </BlockStack>
+                </div>
+              )}
+
               <div
                 style={{
                   background: "#FFFFFF",
@@ -498,7 +753,7 @@ export default function BackupsPage() {
                             size="slim"
                             variant="tertiary"
                             tone="critical"
-                            onClick={() => setRestoreTarget(b)}
+                            onClick={() => openRestore(b)}
                           >
                             Restore
                           </Button>
@@ -552,42 +807,97 @@ export default function BackupsPage() {
         )}
       </BlockStack>
 
-      {/* Restore confirmation — destructive */}
+      {/* Restore — step 1 shows the plan, step 2 writes it */}
       <Modal
         open={restoreTarget !== null}
-        onClose={() => setRestoreTarget(null)}
-        title="Restore this backup?"
+        onClose={closeRestore}
+        title="Review this restore"
+        size="large"
         primaryAction={{
           content: "Restore backup",
           destructive: true,
           loading: isRestoring,
+          disabled: !diff,
           onAction: confirmRestore,
         }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setRestoreTarget(null) }]}
+        secondaryActions={[{ content: "Cancel", onAction: closeRestore }]}
       >
         <Modal.Section>
-          <BlockStack gap="300">
+          <BlockStack gap="400">
             <Text as="p" variant="bodyMd">
-              This will re-apply the snapshot taken on{" "}
+              Snapshot taken{" "}
               <Text as="span" fontWeight="semibold">
                 {restoreTarget ? formatDate(restoreTarget.createdAt) : ""}
               </Text>
-              .
+              {diff && diff.snapshotShop ? ` from ${diff.snapshotShop}` : ""}.
             </Text>
-            <div
-              style={{
-                background: "#FEF2F2",
-                border: "1px solid #FECACA",
-                borderRadius: "8px",
-                padding: "12px 14px",
-              }}
-            >
-              <Text as="p" variant="bodySm" tone="critical">
-                Metafields and metaobjects with the same keys/handles will be overwritten
-                with the values from this backup. Entries created after the snapshot are
-                not removed. This cannot be undone — consider taking a fresh backup first.
-              </Text>
-            </div>
+
+            {!diff ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "36px 0",
+                }}
+              >
+                <Spinner size="small" accessibilityLabel="Comparing snapshot with your store" />
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Comparing the snapshot with your store…
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Nothing is written until you confirm.
+                </Text>
+              </div>
+            ) : (
+              <BlockStack gap="300">
+                <DiffSection
+                  title="Will create"
+                  tone="#10B981"
+                  count={diff.counts.create}
+                  entries={diff.create}
+                  description="Not present in your store today"
+                />
+                <DiffSection
+                  title="Will update"
+                  tone="#F59E0B"
+                  count={diff.counts.update}
+                  entries={diff.update}
+                  description="Exists with a different value — will be overwritten"
+                />
+                <DiffSection
+                  title="Will skip"
+                  tone="#6B7280"
+                  count={diff.counts.skip}
+                  entries={diff.skip}
+                  description="Already identical to the snapshot"
+                />
+                <DiffSection
+                  title="Definitions to create"
+                  tone="#6366F1"
+                  count={diff.counts.definitions}
+                  entries={diff.definitions}
+                  description="Missing here — create these first or the values won't show in the admin"
+                />
+
+                <div
+                  style={{
+                    background: "#FEF2F2",
+                    border: "1px solid #FECACA",
+                    borderRadius: "8px",
+                    padding: "12px 14px",
+                  }}
+                >
+                  <Text as="p" variant="bodySm" tone="critical">
+                    The {diff.counts.update.toLocaleString()} item
+                    {diff.counts.update === 1 ? "" : "s"} above will be overwritten with the
+                    snapshot&apos;s values. Entries created after the snapshot are not
+                    removed. This cannot be undone — consider taking a fresh backup first.
+                  </Text>
+                </div>
+              </BlockStack>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>

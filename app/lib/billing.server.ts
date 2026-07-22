@@ -51,7 +51,7 @@ export function isPaidPlan(value: string): value is PaidPlan {
  * Charges are test charges outside production so development installs never
  * bill a real card. Shopify also forces test mode on development stores.
  */
-export function useTestCharges(): boolean {
+export function billingTestMode(): boolean {
   if (process.env.SHOPIFY_BILLING_TEST === "false") return false;
   return process.env.NODE_ENV !== "production" || process.env.SHOPIFY_BILLING_TEST === "true";
 }
@@ -224,7 +224,7 @@ export async function createSubscription(
       name: cfg.name,
       returnUrl,
       trialDays: cfg.trialDays,
-      test: useTestCharges(),
+      test: billingTestMode(),
       lineItems: [
         {
           plan: {

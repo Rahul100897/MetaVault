@@ -10,7 +10,7 @@ import {
   createSubscription,
   isPaidPlan,
   syncPlanFromShopify,
-  useTestCharges,
+  billingTestMode,
 } from "../lib/billing.server";
 import { PLAN_DETAILS, type Plan } from "../lib/plans";
 
@@ -39,7 +39,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   }
 
-  return { snapshot, testMode: useTestCharges() };
+  return { snapshot, testMode: billingTestMode() };
 };
 
 type ActionData =
