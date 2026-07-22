@@ -16,7 +16,7 @@ export default function UpgradeModal({ open, onClose, highlight = "pro", reason 
       open={open}
       onClose={onClose}
       title="Upgrade your plan"
-      primaryAction={{ content: "Manage plan", url: "/app/settings" }}
+      primaryAction={{ content: "Manage plan", url: "/app/billing" }}
       secondaryActions={[{ content: "Not now", onAction: onClose }]}
       size="large"
     >

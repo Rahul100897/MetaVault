@@ -12,7 +12,7 @@ import {
 } from "../lib/metafields.server";
 import { OWNER_CONFIG, OWNER_TYPES, chunk, type OwnerType } from "../lib/metafields";
 import { getPlan } from "../lib/plan.server";
-import { canBackup } from "../lib/plans";
+import { canCleanOrphans } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
 
 function truncate(value: string, max = 40): string {
@@ -35,7 +35,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const plan = await getPlan(session.shop);
   // Orphan cleaner is part of the Agency toolkit.
-  return { plan, allowed: canBackup(plan) };
+  return { plan, allowed: canCleanOrphans(plan) };
 };
 
 type ActionData =
@@ -49,7 +49,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   const intent = String(form.get("intent") ?? "");
 
   const plan = await getPlan(session.shop);
-  if (!canBackup(plan)) {
+  if (!canCleanOrphans(plan)) {
     return { ok: false, intent, error: "The orphan cleaner is an Agency feature." };
   }
 

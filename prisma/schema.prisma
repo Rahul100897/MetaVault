@@ -68,6 +68,24 @@ model BackupJob {
   @@index([shopId])
 }
 
+/// Per-shop app state that isn't a Shopify resource: resolved billing plan
+/// (mirrored from the active appSubscription) and notification preferences.
+model ShopSettings {
+  id                 String    @id @default(cuid())
+  shopId             String    @unique
+  plan               String    @default("free")
+  subscriptionGid    String?
+  subscriptionName   String?
+  subscriptionStatus String?
+  currentPeriodEnd   DateTime?
+  trialEndsAt        DateTime?
+  isTest             Boolean   @default(false)
+  emailNotifications Boolean   @default(true)
+  notifyEmail        String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
 model ActivityLog {
   id           String   @id @default(cuid())
   shopId       String

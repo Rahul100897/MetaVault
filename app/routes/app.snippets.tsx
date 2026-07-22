@@ -9,13 +9,13 @@ import { listDefinitions } from "../lib/metaobjects.server";
 import { OWNER_CONFIG, OWNER_TYPES, type OwnerType } from "../lib/metafields";
 import { generateSnippet, snippetHint, type SnippetTarget } from "../lib/liquid";
 import { getPlan } from "../lib/plan.server";
-import { canBackup } from "../lib/plans";
+import { canLiquidSnippets } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const plan = await getPlan(session.shop);
-  const allowed = canBackup(plan);
+  const allowed = canLiquidSnippets(plan);
 
   if (!allowed) {
     return { allowed, metafieldDefs: [], metaobjectDefs: [] };

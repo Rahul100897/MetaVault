@@ -482,7 +482,7 @@ export default function DashboardPage() {
                       ✗ Backup &amp; Restore
                     </Text>
                   </BlockStack>
-                  <Button url="/app/settings" variant="primary" fullWidth>
+                  <Button url="/app/billing" variant="primary" fullWidth>
                     Upgrade to Pro — $15/mo
                   </Button>
                 </BlockStack>

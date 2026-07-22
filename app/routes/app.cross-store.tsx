@@ -9,7 +9,7 @@ import { adminGraphqlClient } from "../lib/admin-graphql.server";
 import { listDefinitions, listEntries, upsertEntry } from "../lib/metaobjects.server";
 import { chunk } from "../lib/metafields";
 import { getPlan } from "../lib/plan.server";
-import { canBackup } from "../lib/plans";
+import { canCrossStoreCopy } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
 
 /**
@@ -33,7 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shopId = session.shop;
   const plan = await getPlan(shopId);
-  const allowed = canBackup(plan);
+  const allowed = canCrossStoreCopy(plan);
 
   if (!allowed) return { allowed, shopId, targets: [], definitions: [] };
 
@@ -72,7 +72,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   const intent = String(form.get("intent") ?? "");
 
   const plan = await getPlan(shopId);
-  if (!canBackup(plan)) {
+  if (!canCrossStoreCopy(plan)) {
     return { ok: false, intent, error: "Cross-store copy is an Agency feature." };
   }
 

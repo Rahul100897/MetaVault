@@ -1,19 +1,43 @@
 import prisma from "../db.server";
-import type { Plan } from "./plans";
+import { isPro as planIsPro, isAgency as planIsAgency, type Plan } from "./plans";
 
 /**
  * Resolve the plan a shop is on.
  *
- * Billing is not yet wired (Phase 3), so this defaults to "free" and honors a
- * SHOP_PLAN_OVERRIDE env var for development/testing. When App Store billing
- * lands, swap this for an appSubscription query / Subscription table lookup.
+ * Reads the mirrored subscription state in ShopSettings, which
+ * `syncPlanFromShopify` (billing.server.ts) keeps in step with Shopify's
+ * `currentAppInstallation.activeSubscriptions`. Reading from the DB keeps this
+ * a single indexed lookup, so it's safe to call on every page load.
+ *
+ * SHOP_PLAN_OVERRIDE remains as a **development-only** escape hatch for testing
+ * gated features without creating charges; it is ignored in production.
  */
-export async function getPlan(_shopId: string): Promise<Plan> {
+export async function getPlan(shopId: string): Promise<Plan> {
   const override = process.env.SHOP_PLAN_OVERRIDE;
-  if (override === "pro" || override === "agency" || override === "free") {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    (override === "pro" || override === "agency" || override === "free")
+  ) {
     return override;
   }
+
+  const settings = await prisma.shopSettings.findUnique({
+    where: { shopId },
+    select: { plan: true },
+  });
+  const plan = settings?.plan;
+  if (plan === "pro" || plan === "agency" || plan === "free") return plan;
   return "free";
+}
+
+/** True when the shop is on Pro or Agency. */
+export async function isPro(shopId: string): Promise<boolean> {
+  return planIsPro(await getPlan(shopId));
+}
+
+/** True when the shop is on Agency. */
+export async function isAgency(shopId: string): Promise<boolean> {
+  return planIsAgency(await getPlan(shopId));
 }
 
 /**

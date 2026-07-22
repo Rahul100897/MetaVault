@@ -28,6 +28,18 @@ export function canBackup(plan: Plan): boolean {
   return isAgency(plan);
 }
 
+export function canCrossStoreCopy(plan: Plan): boolean {
+  return isAgency(plan);
+}
+
+export function canLiquidSnippets(plan: Plan): boolean {
+  return isAgency(plan);
+}
+
+export function canCleanOrphans(plan: Plan): boolean {
+  return isAgency(plan);
+}
+
 export type PlanDetail = {
   id: Plan;
   name: string;

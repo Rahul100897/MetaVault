@@ -176,6 +176,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Plans & Billing",
+    to: "/app/billing",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" />
+        <path d="M2 10h20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M6 15h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Settings",
     to: "/app/settings",
     icon: (
