@@ -26,6 +26,11 @@ function failureRow(row: ValidatedRow, error: string): CsvRow {
 }
 
 export async function processImportJob(data: ImportJobData): Promise<void> {
+  if (data.type === "metaobjects") {
+    const { processMetaobjectImport } = await import("./metaobject-import.server");
+    return processMetaobjectImport(data);
+  }
+
   const { jobId, shopId, shopDomain, accessToken, fileUrl } = data;
 
   await prisma.importJob.update({ where: { id: jobId }, data: { status: "running" } });

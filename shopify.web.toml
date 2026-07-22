@@ -1,0 +1,13 @@
+# Tells the Shopify CLI how to start the app's web server (Remix) during
+# `shopify app dev`. Without this file the CLI only starts the proxy and the
+# app is never booted, so every request returns "Invalid path /...".
+#
+# NOTE: `dev` must invoke Remix directly — not `npm run dev`, which is the
+# tunnel-sync wrapper (scripts/dev.sh) and would recurse.
+
+name = "metavault"
+roles = ["frontend", "backend"]
+webhooks_path = "/webhooks"
+
+[commands]
+dev = "npm exec remix vite:dev"

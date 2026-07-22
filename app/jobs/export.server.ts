@@ -88,6 +88,11 @@ export function transformBulkJsonl(jsonl: string, ownerType: OwnerType): CsvRow[
 }
 
 export async function processExportJob(data: ExportJobData): Promise<void> {
+  if (data.type === "metaobjects") {
+    const { processMetaobjectExport } = await import("./metaobject-export.server");
+    return processMetaobjectExport(data);
+  }
+
   const { jobId, shopId, shopDomain, accessToken } = data;
   const ownerType: OwnerType =
     data.resourceType && isOwnerType(data.resourceType) ? data.resourceType : "PRODUCT";
