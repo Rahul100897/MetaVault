@@ -102,6 +102,16 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Orphan Cleaner",
+    to: "/app/orphans",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+        <path d="M21 21l-4-4M8 11h6M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Activity Log",
     to: "/app/activity",
     icon: (
