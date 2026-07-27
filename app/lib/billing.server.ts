@@ -13,39 +13,11 @@
 
 import prisma from "../db.server";
 import { graphqlRequest, type AdminClient } from "./graphql.server";
-import type { Plan } from "./plans";
+import { BILLING_PLANS, isPaidPlan, type Plan, type PaidPlan } from "./plans";
 
-export type PaidPlan = Exclude<Plan, "free">;
-
-export type BillingPlanConfig = {
-  id: PaidPlan;
-  /** Name shown on the merchant's Shopify invoice — also how we map back to a plan. */
-  name: string;
-  amount: number;
-  currencyCode: string;
-  trialDays: number;
-};
-
-export const BILLING_PLANS: Record<PaidPlan, BillingPlanConfig> = {
-  pro: {
-    id: "pro",
-    name: "MetaVault Pro",
-    amount: 15,
-    currencyCode: "USD",
-    trialDays: 7,
-  },
-  agency: {
-    id: "agency",
-    name: "MetaVault Agency",
-    amount: 29,
-    currencyCode: "USD",
-    trialDays: 7,
-  },
-};
-
-export function isPaidPlan(value: string): value is PaidPlan {
-  return value === "pro" || value === "agency";
-}
+// Re-exported for existing importers; the config itself is client-safe (plans.ts).
+export { BILLING_PLANS, isPaidPlan };
+export type { PaidPlan };
 
 /**
  * Charges are test charges outside production so development installs never

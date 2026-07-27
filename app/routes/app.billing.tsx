@@ -5,14 +5,12 @@ import { Page, Text, BlockStack, InlineStack, Button, Badge, Modal } from "@shop
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
-  BILLING_PLANS,
   cancelSubscription,
   createSubscription,
-  isPaidPlan,
   syncPlanFromShopify,
   billingTestMode,
 } from "../lib/billing.server";
-import { PLAN_DETAILS, type Plan } from "../lib/plans";
+import { BILLING_PLANS, isPaidPlan, PLAN_DETAILS, type Plan } from "../lib/plans";
 
 /**
  * Billing page. The loader always re-syncs from Shopify, which doubles as the
