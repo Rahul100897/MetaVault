@@ -15,6 +15,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     prisma.exportJob.deleteMany({ where: { shopId: shop } }),
     prisma.backupJob.deleteMany({ where: { shopId: shop } }),
     prisma.activityLog.deleteMany({ where: { shopId: shop } }),
+    prisma.shopSettings.deleteMany({ where: { shopId: shop } }),
     prisma.session.deleteMany({ where: { shop } }),
   ]);
 

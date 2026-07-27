@@ -1,18 +1,42 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 
-const connection: ConnectionOptions = {
-  host: process.env.REDIS_HOST ?? "localhost",
-  port: Number(process.env.REDIS_PORT ?? 6379),
-  password: process.env.REDIS_PASSWORD,
-  // BullMQ requires this to be null for blocking commands.
+// Tuning shared by both connection styles. maxRetriesPerRequest must be null for
+// BullMQ's blocking commands; the keepAlive/retry settings stop Railway's Redis
+// proxy dropping idle sockets from flooding the logs with ECONNRESET.
+const TUNING = {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
-  // Railway's Redis proxy drops idle sockets; keep them alive and reconnect
-  // quietly instead of flooding the logs with ECONNRESET.
   keepAlive: 10000,
   retryStrategy: (times: number) => Math.min(times * 200, 2000),
   reconnectOnError: () => true,
-};
+} satisfies Partial<ConnectionOptions>;
+
+/**
+ * Prefer a single REDIS_URL (what Railway and most hosts provide), falling back
+ * to discrete REDIS_HOST/PORT/PASSWORD for local setups. `rediss://` enables TLS.
+ */
+function buildConnection(): ConnectionOptions {
+  const url = process.env.REDIS_URL;
+  if (url) {
+    const u = new URL(url);
+    return {
+      host: u.hostname,
+      port: Number(u.port || 6379),
+      username: u.username || undefined,
+      password: u.password || undefined,
+      tls: u.protocol === "rediss:" ? {} : undefined,
+      ...TUNING,
+    };
+  }
+  return {
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: Number(process.env.REDIS_PORT ?? 6379),
+    password: process.env.REDIS_PASSWORD,
+    ...TUNING,
+  };
+}
+
+const connection: ConnectionOptions = buildConnection();
 
 export const QUEUE_NAMES = {
   IMPORT: "metavault-import",
