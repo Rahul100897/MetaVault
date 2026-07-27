@@ -23,6 +23,11 @@ import { exportQueue, importQueue } from "../lib/queue.server";
 import { uploadFile, buildFileKey } from "../lib/r2.server";
 import MetaobjectDrawer, { type DrawerMode } from "../components/MetaobjectDrawer";
 import MetaobjectImportModal from "../components/MetaobjectImportModal";
+import SnippetModal from "../components/SnippetModal";
+import UpgradeModal from "../components/UpgradeModal";
+import { getPlan } from "../lib/plan.server";
+import { isAgency } from "../lib/plans";
+import type { SnippetTarget } from "../lib/liquid";
 import {
   inputKindForType,
   truncate,
@@ -34,9 +39,10 @@ import {
 } from "../lib/metaobjects";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
 
+  const plan = await getPlan(session.shop);
   const definitions = await listDefinitions(admin);
   const requested = url.searchParams.get("type");
   const selectedType =
@@ -49,7 +55,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     entries = await listEntries(admin, { type: selectedType, first: 50 });
   }
 
-  return { definitions, selectedType, entries };
+  return { definitions, selectedType, entries, plan };
 };
 
 type ActionData =
@@ -382,7 +388,8 @@ function EntriesSkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function MetaobjectsPage() {
-  const { definitions, selectedType, entries } = useLoaderData<typeof loader>();
+  const { definitions, selectedType, entries, plan } = useLoaderData<typeof loader>();
+  const agency = isAgency(plan);
   const entriesFetcher = useFetcher<typeof loader>();
   const deleteFetcher = useFetcher<typeof action>();
   const exportFetcher = useFetcher<typeof action>();
@@ -404,6 +411,9 @@ export default function MetaobjectsPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [publishConfirm, setPublishConfirm] = useState<"ACTIVE" | "DRAFT" | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  // "Get code" snippet modal + upgrade prompt (Agency-gated).
+  const [snippetTarget, setSnippetTarget] = useState<SnippetTarget | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const isDeleting = deleteFetcher.state !== "idle";
 
@@ -536,6 +546,23 @@ export default function MetaobjectsPage() {
     entriesFetcher.load(`/app/metaobjects?type=${encodeURIComponent(type)}`);
   };
 
+  const openSnippet = (def: MetaobjectDefinitionSummary) => {
+    if (!agency) {
+      setUpgradeOpen(true);
+      return;
+    }
+    setSnippetTarget({
+      kind: "metaobject",
+      type: def.type,
+      name: def.name,
+      fields: def.fieldDefinitions.map((f) => ({
+        key: f.key,
+        name: f.name,
+        type: f.type,
+      })),
+    });
+  };
+
   return (
     <Page fullWidth>
       <style>{`
@@ -649,6 +676,7 @@ export default function MetaobjectsPage() {
                       </Text>
                     </BlockStack>
                     <InlineStack gap="200">
+                      <Button onClick={() => openSnippet(definition)}>Get Liquid</Button>
                       <Button onClick={startSchemaExport} loading={schemaFetcher.state !== "idle"}>
                         Export schema
                       </Button>
@@ -841,6 +869,15 @@ export default function MetaobjectsPage() {
           </Text>
         </Modal.Section>
       </Modal>
+
+      <SnippetModal target={snippetTarget} onClose={() => setSnippetTarget(null)} />
+
+      <UpgradeModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        highlight="agency"
+        reason="Liquid & GraphQL snippets are available on the Agency plan."
+      />
     </Page>
   );
 }

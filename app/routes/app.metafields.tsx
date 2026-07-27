@@ -7,8 +7,10 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { exportQueue } from "../lib/queue.server";
 import { getPlan, getDailyEditCount } from "../lib/plan.server";
-import { isPro, canBulkDelete, FREE_DAILY_LIMIT } from "../lib/plans";
+import { isPro, isAgency, canBulkDelete, FREE_DAILY_LIMIT } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
+import SnippetModal from "../components/SnippetModal";
+import type { SnippetTarget } from "../lib/liquid";
 import { listMetafields, setMetafields, deleteMetafields } from "../lib/metafields.server";
 import {
   chunk,
@@ -205,7 +207,7 @@ function iconBtn(bg: string): React.CSSProperties {
 }
 
 const GRID_COLUMNS =
-  "36px minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 170px minmax(200px, 2fr) 52px";
+  "36px minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 170px minmax(200px, 2fr) 92px";
 
 function TableSkeleton() {
   return (
@@ -282,10 +284,37 @@ export default function MetafieldsPage() {
   const navigate = useNavigate();
   const shopify = useAppBridge();
   const pro = isPro(plan);
-  const [upgrade, setUpgrade] = useState<{ open: boolean; reason: string }>({
+  const agency = isAgency(plan);
+  const [upgrade, setUpgrade] = useState<{
+    open: boolean;
+    reason: string;
+    highlight: "pro" | "agency";
+  }>({
     open: false,
     reason: "",
+    highlight: "pro",
   });
+  // "Get code" modal target (Agency). null = closed.
+  const [snippetTarget, setSnippetTarget] = useState<SnippetTarget | null>(null);
+
+  const openSnippet = (row: MetafieldRow) => {
+    if (!agency) {
+      setUpgrade({
+        open: true,
+        reason: "Liquid & GraphQL snippets are available on the Agency plan.",
+        highlight: "agency",
+      });
+      return;
+    }
+    setSnippetTarget({
+      kind: "metafield",
+      ownerType,
+      namespace: row.namespace,
+      key: row.key,
+      type: row.type,
+      name: `${row.namespace}.${row.key}`,
+    });
+  };
   const loadMore = useFetcher<typeof loader>();
   const editFetcher = useFetcher<typeof action>();
   const deleteFetcher = useFetcher<typeof action>();
@@ -378,7 +407,7 @@ export default function MetafieldsPage() {
 
   const startExport = () => {
     if (!pro) {
-      setUpgrade({ open: true, reason: "CSV export is a Pro feature." });
+      setUpgrade({ open: true, reason: "CSV export is a Pro feature.", highlight: "pro" });
       return;
     }
     exportFetcher.submit({ intent: "export", ownerType }, { method: "post" });
@@ -386,7 +415,7 @@ export default function MetafieldsPage() {
 
   const openBulkDelete = () => {
     if (!pro) {
-      setUpgrade({ open: true, reason: "Bulk delete is a Pro feature." });
+      setUpgrade({ open: true, reason: "Bulk delete is a Pro feature.", highlight: "pro" });
       return;
     }
     setBulkConfirmOpen(true);
@@ -516,6 +545,8 @@ export default function MetafieldsPage() {
         .mv-edit-input { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #6366F1; font-size: 13px; outline: none; font-family: inherit; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
         .mv-trash:hover { background: #FEE2E2 !important; }
         .mv-trash:hover svg path { stroke: #DC2626; }
+        .mv-code:hover { background: #EEF0FF !important; }
+        .mv-code:hover svg path { stroke: #6366F1; }
         .mv-check { width: 16px; height: 16px; cursor: pointer; accent-color: #6366F1; }
       `}</style>
 
@@ -693,7 +724,7 @@ export default function MetafieldsPage() {
                 onChange={toggleSelectAll}
               />
             </div>
-            {["Owner", "Namespace", "Key", "Type", "Value", ""].map((h, i) => (
+            {["Owner", "Namespace", "Key", "Type", "Value", "Actions"].map((h, i) => (
               <Text key={i} as="span" variant="bodySm" fontWeight="semibold" tone="text-inverse">
                 {h}
               </Text>
@@ -812,7 +843,29 @@ export default function MetafieldsPage() {
                       </svg>
                     </div>
                   )}
-                  <div style={{ display: "flex", justifyContent: "center" }}>
+                  <div style={{ display: "flex", justifyContent: "center", gap: "2px" }}>
+                    <button
+                      type="button"
+                      aria-label="Get Liquid & GraphQL code"
+                      title="Get Liquid & GraphQL code"
+                      className="mv-code"
+                      onClick={() => openSnippet(row)}
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "6px",
+                        border: "none",
+                        background: "transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                        <path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
                     <button
                       type="button"
                       aria-label="Delete metafield"
@@ -959,11 +1012,13 @@ export default function MetafieldsPage() {
         </Modal.Section>
       </Modal>
 
+      <SnippetModal target={snippetTarget} onClose={() => setSnippetTarget(null)} />
+
       <UpgradeModal
         open={upgrade.open}
-        onClose={() => setUpgrade({ open: false, reason: "" })}
+        onClose={() => setUpgrade({ open: false, reason: "", highlight: "pro" })}
         reason={upgrade.reason}
-        highlight="pro"
+        highlight={upgrade.highlight}
       />
     </Page>
   );
