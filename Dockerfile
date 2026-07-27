@@ -1,18 +1,20 @@
-FROM node:18-alpine
+# MetaVault production image.
+# Railway uses nixpacks (see railway.json); this Dockerfile is kept correct as a
+# fallback / for local container builds. The web service runs `docker-start`
+# (prisma migrate deploy + serve); override the command to `npm run worker` for
+# the worker service.
+FROM node:20-alpine
 RUN apk add --no-cache openssl
 
 EXPOSE 3000
-
 WORKDIR /app
-
 ENV NODE_ENV=production
 
 COPY package.json package-lock.json* ./
 
-RUN npm ci --omit=dev && npm cache clean --force
-# Remove CLI packages since we don't need them in production by default.
-# Remove this line if you want to run CLI commands in your container.
-RUN npm remove @shopify/cli
+# Install ALL deps: the build needs vite/typescript, and the worker runs on tsx
+# at runtime. (Kept unpruned so a single image can serve as web OR worker.)
+RUN npm ci --include=dev && npm cache clean --force
 
 COPY . .
 
