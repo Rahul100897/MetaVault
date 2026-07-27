@@ -5,6 +5,7 @@ import { adminGraphqlClient } from "../lib/admin-graphql.server";
 import { generateCsv, type CsvRow } from "../lib/csv.server";
 import { uploadFile, buildFileKey } from "../lib/r2.server";
 import { OWNER_CONFIG, isOwnerType, type OwnerType } from "../lib/metafields";
+import { notifyJobFinished } from "../lib/notify.server";
 
 /**
  * Bulk export pipeline:
@@ -154,10 +155,18 @@ export async function processExportJob(data: ExportJobData): Promise<void> {
       where: { id: jobId },
       data: { status: "completed", fileUrl: key, completedAt: new Date() },
     });
+
+    await notifyJobFinished({ shopId, type: "export", status: "completed", fileKey: key });
   } catch (err) {
     await prisma.exportJob.update({
       where: { id: jobId },
       data: { status: "failed", completedAt: new Date() },
+    });
+    await notifyJobFinished({
+      shopId,
+      type: "export",
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
     });
     throw err;
   }

@@ -13,6 +13,8 @@ import {
   Collapsible,
   Spinner,
   Modal,
+  Checkbox,
+  TextField,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -31,19 +33,40 @@ import UpgradeModal from "../components/UpgradeModal";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const plan = await getPlan(session.shop);
-  return { plan, canInspect: canCleanOrphans(plan) };
+  const settings = await prisma.shopSettings.findUnique({ where: { shopId: session.shop } });
+  return {
+    plan,
+    canInspect: canCleanOrphans(plan),
+    notifications: {
+      enabled: settings?.emailNotifications ?? true,
+      email: settings?.notifyEmail ?? "",
+    },
+  };
 };
 
 type ActionData =
   | { ok: true; intent: "scan"; summaries: NamespaceSummary[]; scanned: number }
   | { ok: true; intent: "preview"; namespace: string; keys: string[]; total: number }
   | { ok: true; intent: "delete"; namespace: string; deleted: number; failed: number }
+  | { ok: true; intent: "notifications" }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
   const { admin, session } = await authenticate.admin(request);
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
+
+  // Notification prefs are available on every plan and touch no admin data.
+  if (intent === "notifications") {
+    const enabled = form.get("enabled") === "true";
+    const email = String(form.get("email") ?? "").trim();
+    await prisma.shopSettings.upsert({
+      where: { shopId: session.shop },
+      create: { shopId: session.shop, emailNotifications: enabled, notifyEmail: email || null },
+      update: { emailNotifications: enabled, notifyEmail: email || null },
+    });
+    return { ok: true, intent: "notifications" };
+  }
 
   const plan = await getPlan(session.shop);
   if (!canCleanOrphans(plan)) {
@@ -109,6 +132,72 @@ function SubscriptionCard({ plan }: { plan: Plan }) {
           </BlockStack>
           <Button url="/app/billing" variant="primary">
             Manage plan
+          </Button>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
+
+function NotificationsCard({
+  initial,
+}: {
+  initial: { enabled: boolean; email: string };
+}) {
+  const shopify = useAppBridge();
+  const fetcher = useFetcher<typeof action>();
+  const [enabled, setEnabled] = useState(initial.enabled);
+  const [email, setEmail] = useState(initial.email);
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.ok && fetcher.data.intent === "notifications") {
+      shopify.toast.show("Notification settings saved");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state, fetcher.data]);
+
+  const save = () =>
+    fetcher.submit(
+      { intent: "notifications", enabled: String(enabled), email },
+      { method: "post" },
+    );
+
+  const dirty = enabled !== initial.enabled || email !== initial.email;
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <Text as="h2" variant="headingMd" fontWeight="semibold">
+          Email notifications
+        </Text>
+        <Divider />
+        <Checkbox
+          label="Email me when a job finishes"
+          helpText="Get a message when an import, export, backup, or restore completes or fails."
+          checked={enabled}
+          onChange={setEnabled}
+        />
+        <div style={{ maxWidth: "360px" }}>
+          <TextField
+            label="Notification email"
+            type="email"
+            value={email}
+            onChange={setEmail}
+            disabled={!enabled}
+            placeholder="Defaults to the store owner's email"
+            helpText="Leave blank to use the store owner's email."
+            autoComplete="email"
+          />
+        </div>
+        <InlineStack align="end">
+          <Button
+            variant="primary"
+            onClick={save}
+            disabled={!dirty}
+            loading={fetcher.state !== "idle"}
+          >
+            Save
           </Button>
         </InlineStack>
       </BlockStack>
@@ -445,12 +534,13 @@ function NamespaceInspector({ canInspect }: { canInspect: boolean }) {
 }
 
 export default function SettingsPage() {
-  const { plan, canInspect } = useLoaderData<typeof loader>();
+  const { plan, canInspect, notifications } = useLoaderData<typeof loader>();
 
   return (
     <Page title="Settings">
       <BlockStack gap="400">
         <SubscriptionCard plan={plan} />
+        <NotificationsCard initial={notifications} />
         <NamespaceInspector canInspect={canInspect} />
       </BlockStack>
     </Page>

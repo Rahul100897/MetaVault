@@ -7,6 +7,7 @@ import { chunk } from "../lib/metafields";
 import { validateImportCsv, type ValidatedRow } from "../lib/metafield-import.server";
 import { generateCsv, type CsvRow } from "../lib/csv.server";
 import { getFileContent, uploadFile, buildFileKey } from "../lib/r2.server";
+import { notifyJobFinished } from "../lib/notify.server";
 
 /**
  * Import pipeline:
@@ -101,10 +102,23 @@ export async function processImportJob(data: ImportJobData): Promise<void> {
         },
       });
     }
+
+    await notifyJobFinished({
+      shopId,
+      type: "import",
+      status: "completed",
+      fileKey: errorReportUrl,
+    });
   } catch (err) {
     await prisma.importJob.update({
       where: { id: jobId },
       data: { status: "failed", completedAt: new Date() },
+    });
+    await notifyJobFinished({
+      shopId,
+      type: "import",
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
     });
     throw err;
   }

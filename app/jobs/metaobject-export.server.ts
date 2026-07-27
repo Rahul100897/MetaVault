@@ -5,6 +5,7 @@ import { listDefinitions, listEntries } from "../lib/metaobjects.server";
 import { inputKindForType, type MetaobjectFieldValue } from "../lib/metaobjects";
 import { generateCsv, type CsvRow } from "../lib/csv.server";
 import { uploadFile, buildFileKey } from "../lib/r2.server";
+import { notifyJobFinished } from "../lib/notify.server";
 
 /**
  * Flat one-row-per-entry CSV export for metaobjects (the key differentiator).
@@ -65,10 +66,18 @@ export async function processMetaobjectExport(data: ExportJobData): Promise<void
       where: { id: jobId },
       data: { status: "completed", fileUrl: key, completedAt: new Date() },
     });
+
+    await notifyJobFinished({ shopId, type: "export", status: "completed", fileKey: key });
   } catch (err) {
     await prisma.exportJob.update({
       where: { id: jobId },
       data: { status: "failed", completedAt: new Date() },
+    });
+    await notifyJobFinished({
+      shopId,
+      type: "export",
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
     });
     throw err;
   }
