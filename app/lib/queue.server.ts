@@ -1,4 +1,4 @@
-import { Queue, Worker, type ConnectionOptions } from "bullmq";
+import { Queue, type ConnectionOptions } from "bullmq";
 
 const connection: ConnectionOptions = {
   host: process.env.REDIS_HOST ?? "localhost",
@@ -73,10 +73,19 @@ export type ExportJobData = {
 };
 
 export type BackupJobData = {
+  /** BackupJob id (mode "backup") or the BackupJob being restored (mode "restore"). */
   jobId: string;
   shopId: string;
   shopDomain: string;
   accessToken: string;
+  /** Defaults to "backup". */
+  mode?: "backup" | "restore" | "preview";
+  /** Storage key of the snapshot to read (modes "restore" and "preview"). */
+  backupKey?: string;
+  /** ImportJob id used to track restore progress (mode "restore"). */
+  restoreJobId?: string;
+  /** ImportJob id used to track the diff computation (mode "preview"). */
+  previewJobId?: string;
 };
 
 export { connection as redisConnection };

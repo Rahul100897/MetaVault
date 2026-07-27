@@ -148,6 +148,30 @@ export async function listMetafields(
 }
 
 /**
+ * All metafield definitions for an owner type. A metafield whose
+ * (namespace, key) has no definition is "orphaned" — it still holds data but
+ * isn't managed/visible as structured data in the Shopify admin.
+ */
+export async function listMetafieldDefinitions(
+  admin: AdminClient,
+  ownerType: OwnerType,
+): Promise<Array<{ namespace: string; key: string; name: string }>> {
+  const query = `#graphql
+    query MetafieldDefinitions($ownerType: MetafieldOwnerType!, $first: Int!) {
+      metafieldDefinitions(ownerType: $ownerType, first: $first) {
+        nodes { namespace key name }
+      }
+    }`;
+  const data = await withBackoff(async () => {
+    const res = await admin.graphql(query, { variables: { ownerType, first: 250 } });
+    return parseGraphql<{
+      metafieldDefinitions: { nodes: Array<{ namespace: string; key: string; name: string }> };
+    }>(res);
+  });
+  return data.metafieldDefinitions.nodes;
+}
+
+/**
  * Upsert up to 25 metafields atomically (Shopify metafieldsSet constraint).
  * Caller is responsible for chunking larger sets into batches of 25.
  */

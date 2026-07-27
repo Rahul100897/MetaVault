@@ -1,4 +1,6 @@
-import { Link, useLocation } from "@remix-run/react";
+import { Link, useLocation, useNavigation } from "@remix-run/react";
+import { SkeletonStyles } from "./Loader";
+import RouteSkeleton from "./RouteSkeleton";
 
 const NAV_ITEMS = [
   {
@@ -102,6 +104,34 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Cross-store Copy",
+    to: "/app/cross-store",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <path d="M4 7h10M4 7l3-3M4 7l3 3M20 17H10M20 17l-3-3M20 17l-3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    label: "Liquid Snippets",
+    to: "/app/snippets",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    label: "Orphan Cleaner",
+    to: "/app/orphans",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+        <path d="M21 21l-4-4M8 11h6M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Activity Log",
     to: "/app/activity",
     icon: (
@@ -148,6 +178,27 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "App Store Checklist",
+    to: "/app/checklist",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <path d="M9 11l3 3L22 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    label: "Plans & Billing",
+    to: "/app/billing",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" />
+        <path d="M2 10h20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M6 15h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Settings",
     to: "/app/settings",
     icon: (
@@ -178,11 +229,23 @@ const PLAN_COLORS: Record<string, string> = {
 
 export default function AppLayout({ children, plan = "free" }: Props) {
   const location = useLocation();
+  const navigation = useNavigation();
 
   const isActive = (to: string) => {
     if (to === "/app") return location.pathname === "/app";
     return location.pathname.startsWith(to);
   };
+
+  // Show a skeleton shaped like the page we're navigating TO — not the one we're
+  // leaving. Only for real cross-route navigations: same-path changes (search
+  // params, e.g. activity-log filters/pagination) and fetcher submits keep the
+  // current UI so they don't flash a full skeleton.
+  const navPath = navigation.location?.pathname;
+  const isRouteChange =
+    navigation.state === "loading" &&
+    !navigation.formData &&
+    !!navPath &&
+    navPath !== location.pathname;
 
   return (
     <div
@@ -194,6 +257,8 @@ export default function AppLayout({ children, plan = "free" }: Props) {
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
+      <SkeletonStyles />
+
       {/* Sidebar */}
       <aside
         style={{
@@ -337,7 +402,7 @@ export default function AppLayout({ children, plan = "free" }: Props) {
           background: "#F6F6F7",
         }}
       >
-        {children}
+        {isRouteChange ? <RouteSkeleton pathname={navPath} /> : children}
       </main>
     </div>
   );

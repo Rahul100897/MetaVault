@@ -5,8 +5,32 @@
  */
 
 export type Plan = "free" | "pro" | "agency";
+export type PaidPlan = Exclude<Plan, "free">;
 
 export const FREE_DAILY_LIMIT = 50;
+
+export type BillingPlanConfig = {
+  id: PaidPlan;
+  /** Name shown on the merchant's Shopify invoice — also how we map back to a plan. */
+  name: string;
+  amount: number;
+  currencyCode: string;
+  trialDays: number;
+};
+
+/**
+ * Recurring subscription config. Client-safe (no secrets): the billing server
+ * builds the appSubscriptionCreate mutation from it, and the billing UI reads
+ * trial length from it.
+ */
+export const BILLING_PLANS: Record<PaidPlan, BillingPlanConfig> = {
+  pro: { id: "pro", name: "MetaVault Pro", amount: 15, currencyCode: "USD", trialDays: 7 },
+  agency: { id: "agency", name: "MetaVault Agency", amount: 29, currencyCode: "USD", trialDays: 7 },
+};
+
+export function isPaidPlan(value: string): value is PaidPlan {
+  return value === "pro" || value === "agency";
+}
 
 export function isPro(plan: Plan): boolean {
   return plan === "pro" || plan === "agency";
@@ -25,6 +49,18 @@ export function canBulkDelete(plan: Plan): boolean {
 }
 
 export function canBackup(plan: Plan): boolean {
+  return isAgency(plan);
+}
+
+export function canCrossStoreCopy(plan: Plan): boolean {
+  return isAgency(plan);
+}
+
+export function canLiquidSnippets(plan: Plan): boolean {
+  return isAgency(plan);
+}
+
+export function canCleanOrphans(plan: Plan): boolean {
   return isAgency(plan);
 }
 

@@ -23,10 +23,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const filename = key.split("/").pop() || "download.csv";
+  const contentType = filename.endsWith(".json")
+    ? "application/json; charset=utf-8"
+    : filename.endsWith(".jsonl")
+      ? "application/x-ndjson; charset=utf-8"
+      : "text/csv; charset=utf-8";
+
   return new Response(content, {
     status: 200,
     headers: {
-      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Type": contentType,
       "Content-Disposition": `attachment; filename="${filename}"`,
       "Cache-Control": "no-store",
     },
