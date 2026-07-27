@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigation } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -45,39 +45,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null,
   };
 };
-
-function SkeletonCard() {
-  return (
-    <div
-      style={{
-        background: "#FFFFFF",
-        borderRadius: "12px",
-        padding: "20px",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-      }}
-    >
-      <div
-        style={{
-          height: "14px",
-          width: "60%",
-          background: "#E5E7EB",
-          borderRadius: "4px",
-          marginBottom: "12px",
-          animation: "pulse 1.5s infinite",
-        }}
-      />
-      <div
-        style={{
-          height: "32px",
-          width: "40%",
-          background: "#E5E7EB",
-          borderRadius: "4px",
-          animation: "pulse 1.5s infinite",
-        }}
-      />
-    </div>
-  );
-}
 
 function StatCard({
   label,
@@ -197,8 +164,6 @@ function formatRelativeTime(dateStr: string) {
 export default function DashboardPage() {
   const { recentActivity, importJobsToday, lastBackup } =
     useLoaderData<typeof loader>();
-  const navigation = useNavigation();
-  const isLoading = navigation.state === "loading";
 
   const lastBackupLabel = lastBackup
     ? formatRelativeTime(lastBackup.createdAt)
@@ -238,15 +203,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Stats Cards */}
-        {isLoading ? (
-          <div style={{ display: "flex", gap: "16px" }}>
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
             <StatCard
               label="Metafields"
               value="—"
@@ -319,8 +276,7 @@ export default function DashboardPage() {
                 </svg>
               }
             />
-          </div>
-        )}
+        </div>
 
         {/* Main content */}
         <Layout>
@@ -339,39 +295,7 @@ export default function DashboardPage() {
               </div>
               <Divider />
 
-              {isLoading ? (
-                <div style={{ padding: "24px" }}>
-                  {[1, 2, 3].map((i) => (
-                    <div
-                      key={i}
-                      style={{
-                        display: "flex",
-                        gap: "12px",
-                        marginBottom: "16px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "14px",
-                          flex: 1,
-                          background: "#E5E7EB",
-                          borderRadius: "4px",
-                          animation: "pulse 1.5s infinite",
-                        }}
-                      />
-                      <div
-                        style={{
-                          height: "14px",
-                          width: "80px",
-                          background: "#E5E7EB",
-                          borderRadius: "4px",
-                          animation: "pulse 1.5s infinite",
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : recentActivity.length === 0 ? (
+              {recentActivity.length === 0 ? (
                 <EmptyActivityState />
               ) : (
                 <div>
