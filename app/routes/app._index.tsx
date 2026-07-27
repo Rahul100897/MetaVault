@@ -1,5 +1,6 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { Suspense } from "react";
+import { defer, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, Await } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -13,12 +14,19 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { MetaVaultLoader } from "../components/Loader";
 
+/**
+ * The dashboard streams: `authenticate.admin` blocks (it's the auth boundary),
+ * but the store queries are deferred so the HTML shell — sidebar, header, and
+ * the main loader — flushes immediately instead of the merchant staring at a
+ * blank frame while the data loads. The data streams in behind <Await/>.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shopId = session.shop;
 
-  const [recentActivity, importJobsToday, lastBackup] = await Promise.all([
+  const dashboard = Promise.all([
     prisma.activityLog.findMany({
       where: { shopId },
       orderBy: { createdAt: "desc" },
@@ -34,16 +42,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shopId, status: "completed" },
       orderBy: { createdAt: "desc" },
     }),
-  ]);
-
-  return {
-    shopId,
-    recentActivity,
+  ]).then(([recentActivity, importJobsToday, lastBackup]) => ({
+    recentActivity: recentActivity.map((a) => ({
+      id: a.id,
+      action: a.action,
+      resourceType: a.resourceType,
+      rowCount: a.rowCount,
+      createdAt: a.createdAt.toISOString(),
+    })),
     importJobsToday,
-    lastBackup: lastBackup
-      ? { createdAt: lastBackup.createdAt.toISOString() }
-      : null,
-  };
+    lastBackup: lastBackup ? { createdAt: lastBackup.createdAt.toISOString() } : null,
+  }));
+
+  return defer({ dashboard });
+};
+
+type DashboardData = {
+  recentActivity: Array<{
+    id: string;
+    action: string;
+    resourceType: string;
+    rowCount: number;
+    createdAt: string;
+  }>;
+  importJobsToday: number;
+  lastBackup: { createdAt: string } | null;
 };
 
 function StatCard({
@@ -162,12 +185,7 @@ function formatRelativeTime(dateStr: string) {
 }
 
 export default function DashboardPage() {
-  const { recentActivity, importJobsToday, lastBackup } =
-    useLoaderData<typeof loader>();
-
-  const lastBackupLabel = lastBackup
-    ? formatRelativeTime(lastBackup.createdAt)
-    : "Never";
+  const { dashboard } = useLoaderData<typeof loader>();
 
   return (
     <Page>
@@ -180,7 +198,7 @@ export default function DashboardPage() {
       `}</style>
 
       <BlockStack gap="600">
-        {/* Header */}
+        {/* Header (renders instantly, before the data streams in) */}
         <div style={{ paddingTop: "8px" }}>
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
@@ -202,6 +220,37 @@ export default function DashboardPage() {
           </InlineStack>
         </div>
 
+        <Suspense
+          fallback={
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                minHeight: "420px",
+              }}
+            >
+              <MetaVaultLoader label="Loading your dashboard…" />
+            </div>
+          }
+        >
+          <Await resolve={dashboard}>
+            {(data) => <DashboardBody data={data} />}
+          </Await>
+        </Suspense>
+      </BlockStack>
+    </Page>
+  );
+}
+
+function DashboardBody({ data }: { data: DashboardData }) {
+  const { recentActivity, importJobsToday, lastBackup } = data;
+  const lastBackupLabel = lastBackup
+    ? formatRelativeTime(lastBackup.createdAt)
+    : "Never";
+
+  return (
+    <BlockStack gap="600">
         {/* Stats Cards */}
         <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
             <StatCard
@@ -414,7 +463,6 @@ export default function DashboardPage() {
             </BlockStack>
           </Layout.Section>
         </Layout>
-      </BlockStack>
-    </Page>
+    </BlockStack>
   );
 }

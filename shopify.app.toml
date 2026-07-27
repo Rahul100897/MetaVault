@@ -2,7 +2,7 @@
 
 client_id = "5a2865c40f0d0336af7e843686c54236"
 name = "MetaVault"
-application_url = "https://stylish-signing-extremely-nil.trycloudflare.com"
+application_url = "https://town-radiation-samuel-testing.trycloudflare.com"
 embedded = true
 
 [build]
@@ -38,4 +38,4 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://stylish-signing-extremely-nil.trycloudflare.com/auth/callback", "https://stylish-signing-extremely-nil.trycloudflare.com/auth/shopify/callback", "https://stylish-signing-extremely-nil.trycloudflare.com/shopify/auth/callback" ]
+redirect_urls = [ "https://town-radiation-samuel-testing.trycloudflare.com/auth/callback", "https://town-radiation-samuel-testing.trycloudflare.com/auth/shopify/callback", "https://town-radiation-samuel-testing.trycloudflare.com/shopify/auth/callback" ]
