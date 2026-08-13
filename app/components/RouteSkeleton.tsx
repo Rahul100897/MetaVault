@@ -7,7 +7,7 @@
  * skeleton" bug and gives every screen an instant loading state.
  */
 
-import { Shimmer, MetaVaultLoader } from "./Loader";
+import { Shimmer } from "./Loader";
 
 const CARD: React.CSSProperties = {
   background: "#FFFFFF",
@@ -183,21 +183,85 @@ function TwoPanelSkeleton() {
   );
 }
 
-/** Generic page: header + a card that hosts the animated mark. */
-function GenericSkeleton() {
+/** A single card block with a heading line and a few body rows. */
+function CardBlock({ rows = 4, height = 300 }: { rows?: number; height?: number }) {
+  return (
+    <div style={{ ...CARD, padding: "22px 24px", minHeight: height }}>
+      <Shimmer width={180} height={18} />
+      <div style={{ height: "20px" }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+        {Array.from({ length: rows }).map((_, i) => (
+          <Shimmer key={i} width={`${90 - i * 8}%`} height={14} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Generic card-based page (settings, checklist, orphans, cross-store, import/export). */
+function CardsSkeleton() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <PageHeader />
-      <div
-        style={{
-          ...CARD,
-          minHeight: "360px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <MetaVaultLoader />
+      <CardBlock rows={3} height={140} />
+      <CardBlock rows={5} height={300} />
+    </div>
+  );
+}
+
+/** Billing: a wide current-plan bar + three comparison cards. */
+function BillingSkeleton() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <PageHeader withActions={false} />
+      <div style={{ ...CARD, padding: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <Shimmer width={200} height={20} />
+            <Shimmer width={300} height={13} />
+          </div>
+          <Shimmer width={130} height={16} />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+        {[0, 1, 2].map((i) => (
+          <div key={i} style={{ ...CARD, padding: "22px 20px", minHeight: "320px" }}>
+            <Shimmer width={90} height={20} />
+            <div style={{ height: "10px" }} />
+            <Shimmer width={140} height={13} />
+            <div style={{ height: "18px" }} />
+            <Shimmer width={80} height={30} />
+            <div style={{ height: "20px" }} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {[0, 1, 2, 3].map((r) => (
+                <Shimmer key={r} width="85%" height={13} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Backups: a sticky create panel (left) beside the history table (right). */
+function BackupsSkeleton() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <PageHeader withActions={false} />
+      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "20px" }}>
+        <div style={{ ...CARD, padding: "22px 20px", minHeight: "320px" }}>
+          <Shimmer width={150} height={18} />
+          <div style={{ height: "16px" }} />
+          <Shimmer width="100%" height={12} />
+          <div style={{ height: "8px" }} />
+          <Shimmer width="80%" height={12} />
+          <div style={{ height: "24px" }} />
+          <Shimmer width="100%" height={72} radius={10} />
+          <div style={{ height: "20px" }} />
+          <Shimmer width="100%" height={38} radius={8} />
+        </div>
+        <TableSkeleton rows={6} cols={5} />
       </div>
     </div>
   );
@@ -223,8 +287,13 @@ export default function RouteSkeleton({ pathname }: { pathname: string }) {
         <TableSkeleton rows={8} cols={5} />
       </div>
     );
+  } else if (pathname.startsWith("/app/billing")) {
+    body = <BillingSkeleton />;
+  } else if (pathname.startsWith("/app/backups")) {
+    body = <BackupsSkeleton />;
   } else {
-    body = <GenericSkeleton />;
+    // settings, checklist, orphans, cross-store, import-export, …
+    body = <CardsSkeleton />;
   }
 
   const fullWidth = [...FULL_WIDTH].some((p) => pathname.startsWith(p));
