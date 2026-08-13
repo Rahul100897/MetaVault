@@ -535,7 +535,7 @@ export default function MetafieldsPage() {
   );
 
   return (
-    <Page>
+    <Page fullWidth>
       <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .mv-row:hover { background: #F1F1FF !important; }
