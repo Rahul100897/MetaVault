@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Page, Text, BlockStack, InlineStack, Button, Badge, Select, Banner, Modal } from "@shopify/polaris";
+import { Page, Text, BlockStack, InlineStack, Button, Badge, Select, Banner, Modal, TextField, Card } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -10,6 +10,15 @@ import { listDefinitions, listEntries, upsertEntry } from "../lib/metaobjects.se
 import { chunk } from "../lib/metafields";
 import { getPlan } from "../lib/plan.server";
 import { canCrossStoreCopy } from "../lib/plans";
+import {
+  areConnected,
+  disconnect as disconnectStore,
+  generateConnectionCode,
+  getPendingCode,
+  listConnectedStores,
+  redeemConnectionCode,
+  type ConnectedStore,
+} from "../lib/connections.server";
 import UpgradeModal from "../components/UpgradeModal";
 
 /**
@@ -35,22 +44,37 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const plan = await getPlan(shopId);
   const allowed = canCrossStoreCopy(plan);
 
-  if (!allowed) return { allowed, shopId, targets: [], definitions: [] };
+  if (!allowed) {
+    return {
+      allowed,
+      shopId,
+      connections: [] as ConnectedStore[],
+      pendingCode: null as { code: string; expiresAt: string } | null,
+      definitions: [] as Array<{ type: string; name: string; entryCount: number }>,
+    };
+  }
 
-  const sessions = await prisma.session.findMany({
-    where: { shop: { not: shopId }, isOnline: false },
-    select: { shop: true },
-  });
-  const targets = Array.from(new Set(sessions.map((s) => s.shop)));
+  const [connections, pending, defs] = await Promise.all([
+    listConnectedStores(shopId),
+    getPendingCode(shopId),
+    listDefinitions(admin),
+  ]);
 
-  const defs = await listDefinitions(admin);
   const definitions = defs.map((d) => ({
     type: d.type,
     name: d.name,
     entryCount: d.entryCount,
   }));
 
-  return { allowed, shopId, targets, definitions };
+  return {
+    allowed,
+    shopId,
+    connections,
+    pendingCode: pending
+      ? { code: pending.code, expiresAt: pending.expiresAt.toISOString() }
+      : null,
+    definitions,
+  };
 };
 
 type ActionData =
@@ -63,6 +87,9 @@ type ActionData =
       willCreate: number;
     }
   | { ok: true; intent: "copy"; copied: number; failed: number }
+  | { ok: true; intent: "generate-code"; code: string; expiresAt: string }
+  | { ok: true; intent: "redeem-code"; partnerShop: string }
+  | { ok: true; intent: "disconnect" }
   | { ok: false; intent: string; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
@@ -76,6 +103,25 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
     return { ok: false, intent, error: "Cross-store copy is an Agency feature." };
   }
 
+  // --- Pairing ---
+  if (intent === "generate-code") {
+    const { code, expiresAt } = await generateConnectionCode(shopId);
+    return { ok: true, intent: "generate-code", code, expiresAt: expiresAt.toISOString() };
+  }
+
+  if (intent === "redeem-code") {
+    const result = await redeemConnectionCode(String(form.get("code") ?? ""), shopId);
+    return result.ok
+      ? { ok: true, intent: "redeem-code", partnerShop: result.partnerShop }
+      : { ok: false, intent, error: result.error };
+  }
+
+  if (intent === "disconnect") {
+    await disconnectStore(shopId, String(form.get("connectionId") ?? ""));
+    return { ok: true, intent: "disconnect" };
+  }
+
+  // --- Copy (preview / copy) ---
   const targetShop = String(form.get("targetShop") ?? "");
   const type = String(form.get("type") ?? "");
   if (!targetShop || !type) {
@@ -83,6 +129,15 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   }
   if (targetShop === shopId) {
     return { ok: false, intent, error: "Source and target store must be different." };
+  }
+
+  // SECURITY: only ever write to a store the merchant has explicitly linked.
+  if (!(await areConnected(shopId, targetShop))) {
+    return {
+      ok: false,
+      intent,
+      error: "That store isn't connected. Link it first with a connection code.",
+    };
   }
 
   const targetAdmin = await targetAdminFor(targetShop);
@@ -199,18 +254,30 @@ function LockedPanel({ onUpgrade }: { onUpgrade: () => void }) {
 }
 
 export default function CrossStorePage() {
-  const { allowed, shopId, targets, definitions } = useLoaderData<typeof loader>();
+  const { allowed, shopId, connections, pendingCode, definitions } =
+    useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const previewFetcher = useFetcher<typeof action>();
   const copyFetcher = useFetcher<typeof action>();
+  const linkFetcher = useFetcher<typeof action>();
+
+  // Only connected stores that still have the app installed can be written to.
+  const installedTargets = connections.filter((c) => c.installed).map((c) => c.shop);
 
   const [type, setType] = useState(definitions[0]?.type ?? "");
-  const [targetShop, setTargetShop] = useState(targets[0] ?? "");
+  const [targetShop, setTargetShop] = useState(installedTargets[0] ?? "");
+  const [codeInput, setCodeInput] = useState("");
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const preview =
     previewFetcher.data?.ok && previewFetcher.data.intent === "preview" ? previewFetcher.data : null;
+
+  // Keep a valid target selected as connections come and go.
+  useEffect(() => {
+    if (!targetShop && installedTargets.length) setTargetShop(installedTargets[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installedTargets.join(",")]);
 
   useEffect(() => {
     if (previewFetcher.state !== "idle" || !previewFetcher.data) return;
@@ -236,12 +303,43 @@ export default function CrossStorePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyFetcher.state, copyFetcher.data]);
 
+  useEffect(() => {
+    if (linkFetcher.state !== "idle" || !linkFetcher.data) return;
+    const d = linkFetcher.data;
+    if (!d.ok) {
+      shopify.toast.show(d.error, { isError: true });
+      return;
+    }
+    if (d.intent === "redeem-code") {
+      setCodeInput("");
+      shopify.toast.show(`Connected to ${d.partnerShop}`);
+    } else if (d.intent === "disconnect") {
+      shopify.toast.show("Store disconnected");
+    }
+    // generate-code surfaces via revalidation (pendingCode).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkFetcher.state, linkFetcher.data]);
+
   const runPreview = () =>
     previewFetcher.submit({ intent: "preview", type, targetShop }, { method: "post" });
   const runCopy = () => copyFetcher.submit({ intent: "copy", type, targetShop }, { method: "post" });
+  const generateCode = () => linkFetcher.submit({ intent: "generate-code" }, { method: "post" });
+  const redeemCode = () =>
+    linkFetcher.submit({ intent: "redeem-code", code: codeInput.trim() }, { method: "post" });
+  const disconnect = (connectionId: string) =>
+    linkFetcher.submit({ intent: "disconnect", connectionId }, { method: "post" });
+  const copyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      shopify.toast.show("Code copied");
+    } catch {
+      shopify.toast.show("Couldn't copy — select the code manually", { isError: true });
+    }
+  };
 
   const previewing = previewFetcher.state !== "idle";
   const copying = copyFetcher.state !== "idle";
+  const linking = linkFetcher.state !== "idle";
 
   return (
     <Page>
@@ -273,11 +371,156 @@ export default function CrossStorePage() {
               </Text>
             </Banner>
 
-            {targets.length === 0 ? (
-              <Banner tone="warning" title="No other stores connected">
+            {/* Connect a store — the security boundary: copy is only allowed
+                between stores the merchant has deliberately linked. */}
+            <Card>
+              <BlockStack gap="400">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd" fontWeight="semibold">
+                    Connect a store
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Link another store you manage (both must have MetaVault installed). Copy
+                    is only ever allowed between connected stores.
+                  </Text>
+                </BlockStack>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "20px",
+                    alignItems: "start",
+                  }}
+                >
+                  {/* Share a code */}
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="bodyMd" fontWeight="semibold">
+                      1. Share a code
+                    </Text>
+                    {pendingCode ? (
+                      <BlockStack gap="150">
+                        <InlineStack gap="200" blockAlign="center">
+                          <span
+                            style={{
+                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                              fontSize: "18px",
+                              fontWeight: 700,
+                              letterSpacing: "1px",
+                              background: "#F1F1F4",
+                              padding: "6px 12px",
+                              borderRadius: "8px",
+                            }}
+                          >
+                            {pendingCode.code}
+                          </span>
+                          <Button size="slim" onClick={() => copyCode(pendingCode.code)}>
+                            Copy
+                          </Button>
+                        </InlineStack>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Open MetaVault on the other store → Cross-store copy → paste this
+                          under “Enter a code”. Expires{" "}
+                          {new Date(pendingCode.expiresAt).toLocaleTimeString()}.
+                        </Text>
+                        <div>
+                          <Button variant="plain" onClick={generateCode} loading={linking}>
+                            Generate a new code
+                          </Button>
+                        </div>
+                      </BlockStack>
+                    ) : (
+                      <>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Generate a code here, then enter it on the store you want to link.
+                        </Text>
+                        <div>
+                          <Button onClick={generateCode} loading={linking}>
+                            Generate connection code
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </BlockStack>
+
+                  {/* Enter a code */}
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="bodyMd" fontWeight="semibold">
+                      2. Enter a code
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Paste a code generated on another store to link it here.
+                    </Text>
+                    <InlineStack gap="200" blockAlign="end">
+                      <div style={{ minWidth: "180px" }}>
+                        <TextField
+                          label="Connection code"
+                          labelHidden
+                          value={codeInput}
+                          onChange={setCodeInput}
+                          placeholder="MV-XXXX-XXXX"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <Button
+                        onClick={redeemCode}
+                        loading={linking}
+                        disabled={!codeInput.trim()}
+                      >
+                        Connect
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </div>
+
+                {connections.length > 0 && (
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="bodyMd" fontWeight="semibold">
+                      Connected stores
+                    </Text>
+                    <div style={{ border: "1px solid #ECECF1", borderRadius: "10px", overflow: "hidden" }}>
+                      {connections.map((c, idx) => (
+                        <div
+                          key={c.connectionId}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            padding: "12px 16px",
+                            background: idx % 2 === 0 ? "#FFFFFF" : "#FAFAFB",
+                            borderBottom: "1px solid #F3F4F6",
+                          }}
+                        >
+                          <InlineStack gap="200" blockAlign="center">
+                            <Text as="span" variant="bodySm" fontWeight="medium">
+                              {c.shop}
+                            </Text>
+                            {c.installed ? (
+                              <Badge tone="success">Connected</Badge>
+                            ) : (
+                              <Badge tone="warning">App removed</Badge>
+                            )}
+                          </InlineStack>
+                          <Button
+                            variant="plain"
+                            tone="critical"
+                            onClick={() => disconnect(c.connectionId)}
+                          >
+                            Disconnect
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+
+            {installedTargets.length === 0 ? (
+              <Banner tone="warning" title="No connected stores yet">
                 <Text as="p" variant="bodySm">
-                  Install MetaVault on another store to use it as a copy target. Connected
-                  stores appear here automatically.
+                  Connect a store above to use it as a copy target. Both stores must have
+                  MetaVault installed.
                 </Text>
               </Banner>
             ) : (
@@ -298,7 +541,7 @@ export default function CrossStorePage() {
                     <div style={{ minWidth: "260px" }}>
                       <Select
                         label="Target store"
-                        options={targets.map((t) => ({ label: t, value: t }))}
+                        options={installedTargets.map((t) => ({ label: t, value: t }))}
                         value={targetShop}
                         onChange={setTargetShop}
                       />
