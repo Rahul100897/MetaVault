@@ -14,6 +14,8 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { getPlan } from "../lib/plan.server";
+import { PLAN_DETAILS, type Plan } from "../lib/plans";
 import { MetaVaultLoader } from "../components/Loader";
 
 /**
@@ -25,6 +27,10 @@ import { MetaVaultLoader } from "../components/Loader";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shopId = session.shop;
+
+  // The effective plan (honors SHOP_PLAN_OVERRIDE in dev, ShopSettings in prod)
+  // — the same source the sidebar uses, so the "Your Plan" card stays in sync.
+  const plan = await getPlan(shopId);
 
   const dashboard = Promise.all([
     prisma.activityLog.findMany({
@@ -54,7 +60,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     lastBackup: lastBackup ? { createdAt: lastBackup.createdAt.toISOString() } : null,
   }));
 
-  return defer({ dashboard });
+  return defer({ plan, dashboard });
 };
 
 type DashboardData = {
@@ -184,8 +190,50 @@ function formatRelativeTime(dateStr: string) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+const PLAN_BADGE_TONE: Record<Plan, "info" | "success" | "magic"> = {
+  free: "info",
+  pro: "success",
+  agency: "magic",
+};
+
+/** "Your Plan" card — driven by the effective plan, not hardcoded. */
+function PlanCard({ plan }: { plan: Plan }) {
+  const detail = PLAN_DETAILS.find((p) => p.id === plan) ?? PLAN_DETAILS[0];
+  const isTopTier = plan === "agency";
+  const nextTier = plan === "free" ? "Pro" : "Agency";
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd" fontWeight="semibold">
+            Your Plan
+          </Text>
+          <Badge tone={PLAN_BADGE_TONE[plan]}>{detail.name}</Badge>
+        </InlineStack>
+        <BlockStack gap="100">
+          {detail.features.map((f) => (
+            <Text key={f} as="p" variant="bodySm" tone="subdued">
+              ✓ {f}
+            </Text>
+          ))}
+        </BlockStack>
+        {isTopTier ? (
+          <Button url="/app/billing" fullWidth>
+            Manage plan
+          </Button>
+        ) : (
+          <Button url="/app/billing" variant="primary" fullWidth>
+            Upgrade to {nextTier}
+          </Button>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
-  const { dashboard } = useLoaderData<typeof loader>();
+  const { plan, dashboard } = useLoaderData<typeof loader>();
 
   return (
     <Page>
@@ -235,7 +283,7 @@ export default function DashboardPage() {
           }
         >
           <Await resolve={dashboard}>
-            {(data) => <DashboardBody data={data} />}
+            {(data) => <DashboardBody data={data} plan={plan} />}
           </Await>
         </Suspense>
       </BlockStack>
@@ -243,7 +291,7 @@ export default function DashboardPage() {
   );
 }
 
-function DashboardBody({ data }: { data: DashboardData }) {
+function DashboardBody({ data, plan }: { data: DashboardData; plan: Plan }) {
   const { recentActivity, importJobsToday, lastBackup } = data;
   const lastBackupLabel = lastBackup
     ? formatRelativeTime(lastBackup.createdAt)
@@ -432,34 +480,9 @@ function DashboardBody({ data }: { data: DashboardData }) {
                 </BlockStack>
               </Card>
 
-              {/* Plan Card */}
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd" fontWeight="semibold">
-                      Your Plan
-                    </Text>
-                    <Badge tone="info">Free</Badge>
-                  </InlineStack>
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      ✓ View &amp; edit up to 50 metafields/day
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      ✓ Metaobjects viewer
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      ✗ CSV Import / Export
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      ✗ Backup &amp; Restore
-                    </Text>
-                  </BlockStack>
-                  <Button url="/app/billing" variant="primary" fullWidth>
-                    Upgrade to Pro — $15/mo
-                  </Button>
-                </BlockStack>
-              </Card>
+              {/* Plan Card — reflects the effective plan (same source as the sidebar) */}
+              <PlanCard plan={plan} />
+
             </BlockStack>
           </Layout.Section>
         </Layout>

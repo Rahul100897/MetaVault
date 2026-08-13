@@ -10,6 +10,7 @@ import {
   syncPlanFromShopify,
   billingTestMode,
 } from "../lib/billing.server";
+import { getPlan } from "../lib/plan.server";
 import { BILLING_PLANS, isPaidPlan, PLAN_DETAILS, type Plan } from "../lib/plans";
 
 /**
@@ -37,7 +38,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   }
 
-  return { snapshot, testMode: billingTestMode() };
+  // `snapshot.plan` is the REAL Shopify subscription. `effectivePlan` is what
+  // the app actually treats the shop as (getPlan) — identical in production, but
+  // in dev SHOP_PLAN_OVERRIDE can make them differ. We display the effective
+  // plan so this page matches the sidebar/dashboard, and flag the override.
+  const effectivePlan = await getPlan(session.shop);
+  const devOverride = effectivePlan !== snapshot.plan;
+
+  return { snapshot, effectivePlan, devOverride, testMode: billingTestMode() };
 };
 
 type ActionData =
@@ -210,7 +218,7 @@ function PlanCard({
 }
 
 export default function BillingPage() {
-  const { snapshot, testMode } = useLoaderData<typeof loader>();
+  const { snapshot, effectivePlan, devOverride, testMode } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const fetcher = useFetcher<typeof action>();
   const [searchParams] = useSearchParams();
@@ -253,8 +261,11 @@ export default function BillingPage() {
   };
 
   const busy = fetcher.state !== "idle";
-  const onPaidPlan = snapshot.plan !== "free";
-  const currentDetail = PLAN_DETAILS.find((p) => p.id === snapshot.plan) ?? PLAN_DETAILS[0];
+  // Display uses the effective plan (matches the rest of the app). Cancel/renewal
+  // details come from the REAL subscription, so those key off `snapshot`.
+  const hasRealSubscription = snapshot.plan !== "free" && !!snapshot.subscriptionGid;
+  const onPaidPlan = effectivePlan !== "free";
+  const currentDetail = PLAN_DETAILS.find((p) => p.id === effectivePlan) ?? PLAN_DETAILS[0];
   const inTrial = snapshot.trialEndsAt ? new Date(snapshot.trialEndsAt) > new Date() : false;
 
   return (
@@ -287,6 +298,24 @@ export default function BillingPage() {
           </div>
         )}
 
+        {devOverride && (
+          <div
+            style={{
+              background: "#EEF0FF",
+              border: "1px solid #C7D2FE",
+              borderRadius: "10px",
+              padding: "12px 16px",
+            }}
+          >
+            <Text as="p" variant="bodySm">
+              <b>Development override.</b> The app is treating this shop as{" "}
+              <b>{effectivePlan}</b> via <code>SHOP_PLAN_OVERRIDE</code>, but no real Shopify
+              subscription exists{snapshot.plan !== "free" ? ` (actual: ${snapshot.plan})` : ""}.
+              This override is ignored in production.
+            </Text>
+          </div>
+        )}
+
         {/* Current plan */}
         <div
           style={{
@@ -303,15 +332,21 @@ export default function BillingPage() {
                   {currentDetail.name} plan
                 </Text>
                 <Badge tone={onPaidPlan ? "success" : "info"}>
-                  {snapshot.subscriptionStatus?.toLowerCase() ?? "active"}
+                  {hasRealSubscription
+                    ? (snapshot.subscriptionStatus?.toLowerCase() ?? "active")
+                    : devOverride
+                      ? "dev override"
+                      : "active"}
                 </Badge>
                 {inTrial && <Badge tone="magic">Free trial</Badge>}
               </InlineStack>
 
               <Text as="p" variant="bodySm" tone="subdued">
-                {onPaidPlan
+                {hasRealSubscription
                   ? `${currentDetail.price} · renews ${formatDate(snapshot.currentPeriodEnd)}`
-                  : "No charge. Upgrade any time to unlock import/export, backups and more."}
+                  : onPaidPlan
+                    ? "Unlocked by SHOP_PLAN_OVERRIDE for development — no real subscription or charge."
+                    : "No charge. Upgrade any time to unlock import/export, backups and more."}
               </Text>
 
               {inTrial && (
@@ -322,7 +357,7 @@ export default function BillingPage() {
               )}
             </BlockStack>
 
-            {onPaidPlan && (
+            {hasRealSubscription && (
               <Button variant="plain" tone="critical" onClick={() => setCancelOpen(true)}>
                 Cancel subscription
               </Button>
@@ -343,7 +378,7 @@ export default function BillingPage() {
             <PlanCard
               key={plan.id}
               plan={plan}
-              current={plan.id === snapshot.plan}
+              current={plan.id === effectivePlan}
               loading={busy && pendingPlan === plan.id}
               onUpgrade={() => upgrade(plan.id)}
             />
