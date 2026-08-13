@@ -16,6 +16,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     prisma.backupJob.deleteMany({ where: { shopId: shop } }),
     prisma.activityLog.deleteMany({ where: { shopId: shop } }),
     prisma.shopSettings.deleteMany({ where: { shopId: shop } }),
+    // Cross-store pairings this shop is part of (either side).
+    prisma.storeConnection.deleteMany({ where: { OR: [{ shopA: shop }, { shopB: shop }] } }),
     prisma.session.deleteMany({ where: { shop } }),
   ]);
 
