@@ -570,6 +570,9 @@ export default function MetaobjectsPage() {
         .mo-def:hover { background: #F1F1FF; }
         .mo-row:hover { background: #EEF2FF !important; }
         .mo-check { width: 16px; height: 16px; cursor: pointer; accent-color: #6366F1; }
+        /* Let grid cells shrink and truncate instead of overflowing into
+           neighbouring columns (long GID/JSON values). */
+        .mo-row > *, .mo-head > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       `}</style>
 
       <BlockStack gap="500">
@@ -1049,10 +1052,17 @@ function EntriesTable({
   const gridColumns = [
     "36px",
     "minmax(140px, 180px)",
-    ...fields.map(() => "minmax(130px, 1fr)"),
+    ...fields.map(() => "minmax(150px, 1fr)"),
     ...(showStatus ? ["110px"] : []),
     "118px",
   ].join(" ");
+
+  // Minimum width below which the table scrolls horizontally. Above it, the
+  // grid fills the container so the `1fr` field columns distribute the space
+  // (instead of the old fit-content sizing that always overflowed on wide screens).
+  const columnCount = 3 + fields.length + (showStatus ? 1 : 0);
+  const minTableWidth =
+    36 + 180 + fields.length * 150 + (showStatus ? 110 : 0) + 118 + (columnCount - 1) * 16 + 48;
 
   if (rows.length === 0) {
     return (
@@ -1071,9 +1081,10 @@ function EntriesTable({
 
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ minWidth: "fit-content" }}>
+      <div style={{ minWidth: `${minTableWidth}px` }}>
         {/* Header */}
         <div
+          className="mo-head"
           style={{
             display: "grid",
             gridTemplateColumns: gridColumns,

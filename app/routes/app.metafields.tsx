@@ -548,6 +548,10 @@ export default function MetafieldsPage() {
         .mv-code:hover { background: #EEF0FF !important; }
         .mv-code:hover svg path { stroke: #6366F1; }
         .mv-check { width: 16px; height: 16px; cursor: pointer; accent-color: #6366F1; }
+        /* Let grid cells shrink so long values truncate instead of pushing the
+           fixed Actions column off the right edge. */
+        .mv-row > *, .mv-mf-head > * { min-width: 0; }
+        .mv-value { min-width: 0; overflow: hidden; }
       `}</style>
 
       <BlockStack gap="500">
@@ -701,6 +705,7 @@ export default function MetafieldsPage() {
         >
           {/* Sticky header */}
           <div
+            className="mv-mf-head"
             style={{
               display: "grid",
               gridTemplateColumns: GRID_COLUMNS,
@@ -763,13 +768,13 @@ export default function MetafieldsPage() {
                       onChange={() => toggleRow(row.id)}
                     />
                   </div>
-                  <Text as="span" variant="bodySm" fontWeight="medium">
+                  <Text as="span" variant="bodySm" fontWeight="medium" truncate>
                     {row.ownerLabel}
                   </Text>
-                  <Text as="span" variant="bodySm" tone="subdued">
+                  <Text as="span" variant="bodySm" tone="subdued" truncate>
                     {row.namespace}
                   </Text>
-                  <Text as="span" variant="bodySm">
+                  <Text as="span" variant="bodySm" truncate>
                     {row.key}
                   </Text>
                   <div>
@@ -835,9 +840,11 @@ export default function MetafieldsPage() {
                         minHeight: "20px",
                       }}
                     >
-                      <Text as="span" variant="bodySm" tone={row.value ? "subdued" : "disabled"}>
-                        {row.value ? truncate(row.value) : "— empty —"}
-                      </Text>
+                      <div style={{ minWidth: 0, overflow: "hidden" }}>
+                        <Text as="span" variant="bodySm" tone={row.value ? "subdued" : "disabled"} truncate>
+                          {row.value ? truncate(row.value) : "— empty —"}
+                        </Text>
+                      </div>
                       <svg className="mv-pencil" width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
