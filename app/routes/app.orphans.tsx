@@ -58,29 +58,39 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
     let scanned = 0;
 
     for (const ownerType of OWNER_TYPES as OwnerType[]) {
-      const defs = await listMetafieldDefinitions(admin, ownerType);
-      const defined = new Set(defs.map((d) => `${d.namespace}.${d.key}`));
+      try {
+        const defs = await listMetafieldDefinitions(admin, ownerType);
+        const defined = new Set(defs.map((d) => `${d.namespace}.${d.key}`));
 
-      let after: string | null = null;
-      do {
-        const page = await listMetafields(admin, { ownerType, first: 50, after });
-        for (const row of page.rows) {
-          scanned++;
-          if (!defined.has(`${row.namespace}.${row.key}`)) {
-            orphans.push({
-              id: row.id,
-              ownerType,
-              ownerId: row.ownerId,
-              ownerLabel: row.ownerLabel,
-              namespace: row.namespace,
-              key: row.key,
-              type: row.type,
-              value: row.value,
-            });
+        let after: string | null = null;
+        do {
+          const page = await listMetafields(admin, { ownerType, first: 50, after });
+          for (const row of page.rows) {
+            scanned++;
+            if (!defined.has(`${row.namespace}.${row.key}`)) {
+              orphans.push({
+                id: row.id,
+                ownerType,
+                ownerId: row.ownerId,
+                ownerLabel: row.ownerLabel,
+                namespace: row.namespace,
+                key: row.key,
+                type: row.type,
+                value: row.value,
+              });
+            }
           }
-        }
-        after = page.hasNextPage ? page.endCursor : null;
-      } while (after);
+          after = page.hasNextPage ? page.endCursor : null;
+        } while (after);
+      } catch (err) {
+        // Skip owner types the app can't read (e.g. Customers/Orders without
+        // Protected Customer Data approval) rather than failing the whole scan.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[metavault] orphan scan skipping ${ownerType}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
 
     return { ok: true, intent: "scan", orphans, scanned };

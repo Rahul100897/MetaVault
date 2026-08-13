@@ -70,23 +70,33 @@ export async function scanNamespaces(admin: AdminClient): Promise<Scan> {
   };
 
   for (const ownerType of OWNER_TYPES as OwnerType[]) {
-    // Definitions first: a namespace can be "active" even with zero live values.
-    const defs = await listMetafieldDefinitions(admin, ownerType);
-    for (const d of defs) {
-      ensure(d.namespace).hasDefinition = true;
-    }
-
-    let after: string | null = null;
-    do {
-      const page = await listMetafields(admin, { ownerType, first: 50, after });
-      for (const row of page.rows) {
-        scanned++;
-        const entry = ensure(row.namespace);
-        entry.count++;
-        entry.ownerTypes.add(ownerType);
+    try {
+      // Definitions first: a namespace can be "active" even with zero live values.
+      const defs = await listMetafieldDefinitions(admin, ownerType);
+      for (const d of defs) {
+        ensure(d.namespace).hasDefinition = true;
       }
-      after = page.hasNextPage ? page.endCursor : null;
-    } while (after);
+
+      let after: string | null = null;
+      do {
+        const page = await listMetafields(admin, { ownerType, first: 50, after });
+        for (const row of page.rows) {
+          scanned++;
+          const entry = ensure(row.namespace);
+          entry.count++;
+          entry.ownerTypes.add(ownerType);
+        }
+        after = page.hasNextPage ? page.endCursor : null;
+      } while (after);
+    } catch (err) {
+      // Skip owner types the app can't read (e.g. Customers/Orders without
+      // Protected Customer Data approval) rather than failing the whole scan.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[metavault] namespace scan skipping ${ownerType}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   const summaries: NamespaceSummary[] = [...byNamespace.entries()]
@@ -119,16 +129,20 @@ export async function collectNamespaceMetafields(
 ): Promise<NamespaceMetafield[]> {
   const out: NamespaceMetafield[] = [];
   for (const ownerType of OWNER_TYPES as OwnerType[]) {
-    let after: string | null = null;
-    do {
-      const page = await listMetafields(admin, { ownerType, first: 50, after });
-      for (const row of page.rows) {
-        if (row.namespace === namespace) {
-          out.push({ ownerType, ownerId: row.ownerId, namespace: row.namespace, key: row.key });
+    try {
+      let after: string | null = null;
+      do {
+        const page = await listMetafields(admin, { ownerType, first: 50, after });
+        for (const row of page.rows) {
+          if (row.namespace === namespace) {
+            out.push({ ownerType, ownerId: row.ownerId, namespace: row.namespace, key: row.key });
+          }
         }
-      }
-      after = page.hasNextPage ? page.endCursor : null;
-    } while (after);
+        after = page.hasNextPage ? page.endCursor : null;
+      } while (after);
+    } catch {
+      // Inaccessible owner type — skip (see scanNamespaces).
+    }
   }
   return out;
 }

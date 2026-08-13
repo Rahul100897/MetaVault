@@ -143,16 +143,26 @@ export async function collectMetafields(admin: Admin): Promise<SnapshotMetafield
   for (const ownerType of OWNER_TYPES as OwnerType[]) {
     try {
       out.push(...(await collectMetafieldsBulk(admin, ownerType)));
-    } catch (err) {
-      // Bulk can be unavailable for a resource (e.g. protected customer data
-      // not yet granted). Losing a whole owner type would silently produce an
-      // incomplete snapshot, so fall back to paging it.
+    } catch (bulkErr) {
+      // Bulk can be unavailable for a resource, so fall back to paging it.
       // eslint-disable-next-line no-console
       console.warn(
         `[metavault] bulk metafield query failed for ${ownerType}, paging instead:`,
-        err instanceof Error ? err.message : err,
+        bulkErr instanceof Error ? bulkErr.message : bulkErr,
       );
-      out.push(...(await collectMetafieldsPaged(admin, ownerType)));
+      try {
+        out.push(...(await collectMetafieldsPaged(admin, ownerType)));
+      } catch (pageErr) {
+        // The owner type is entirely inaccessible — most commonly Customers or
+        // Orders when the app isn't approved for Protected Customer Data
+        // (ACCESS_DENIED). Skip it so the backup still captures everything else
+        // instead of failing outright.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[metavault] skipping ${ownerType} metafields (inaccessible):`,
+          pageErr instanceof Error ? pageErr.message : pageErr,
+        );
+      }
     }
   }
   return out;
