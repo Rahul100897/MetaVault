@@ -92,6 +92,25 @@ this list.
   verified returning 200; `shop/redact` clears jobs, activity, `ShopSettings`,
   `StoreConnection`, and sessions.
 
+## 7b. App Store compliance audit (2026-08, vs shopify.dev requirements)
+
+- ✅ Admin API pinned to **2026-04** (was 2025-04, out of support). Client +
+  webhooks now aligned.
+- ✅ **Minimal scopes** — removed unused `write_metaobject_definitions`. Changing
+  scopes requires a **re-deploy + merchant re-grant**.
+- 🔴 **Protected Customer Data**: app requests `read_customers`/`write_customers`
+  and reads customer metafields → must **request PCD access in the Partner
+  Dashboard** and declare data-handling. Not declarable purely in `toml`.
+- ✅ GraphQL-only, session-token auth (no localStorage/3p cookies), embedded via
+  App Bridge, GDPR webhooks with HMAC, Billing API (no pop-ups; `_top` redirect),
+  hosted privacy/terms.
+- 🟢 Verify at runtime the App Bridge CDN script (`app-bridge.js`) renders in the
+  document head (provided by `shopify-app-remix` `AppProvider`).
+- 🟢 Not a storefront app → the storefront Lighthouse (-10 pts) requirement does
+  not apply. No theme app extension needed.
+- 🟡 Listing assets (icon 1200×1200, demo store link, screencast, support docs,
+  install eligibility/geo) — Partner Dashboard work, not code.
+
 ## 8. Open items / TODO before launch
 
 - [ ] Wire a real email provider (§6).
