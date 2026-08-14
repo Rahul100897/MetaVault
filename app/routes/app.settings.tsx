@@ -139,6 +139,11 @@ function SubscriptionCard({ plan }: { plan: Plan }) {
   );
 }
 
+/**
+ * Deliberately unrendered — see the note in SettingsPage. Kept whole so
+ * re-enabling email notifications is a one-line change rather than a rewrite.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function NotificationsCard({
   initial,
 }: {
@@ -534,13 +539,17 @@ function NamespaceInspector({ canInspect }: { canInspect: boolean }) {
 }
 
 export default function SettingsPage() {
-  const { plan, canInspect, notifications } = useLoaderData<typeof loader>();
+  const { plan, canInspect } = useLoaderData<typeof loader>();
 
   return (
     <Page title="Settings">
       <BlockStack gap="400">
         <SubscriptionCard plan={plan} />
-        <NotificationsCard initial={notifications} />
+        {/* Email notifications are hidden until a verified sending domain is in
+            place. Resend's sandbox sender only delivers to the account owner, so
+            the setting promised merchants something that could not work for
+            them. The loader, action and NotificationsCard are intact — restore
+            the line below once RESEND_FROM points at a verified domain. */}
         <NamespaceInspector canInspect={canInspect} />
       </BlockStack>
     </Page>
