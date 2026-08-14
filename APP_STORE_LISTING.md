@@ -12,6 +12,12 @@ MetaVault
 ```
 [9 / 30]
 
+**Keep it exactly this — do not list it as "MetaVault app".** Two reasons:
+`shopify.app.toml` sets `name = "MetaVault"`, and Shopify's requirements say the
+TOML name must align with the listing name; and the naming guidance is to lead
+with a distinctive brand rather than append a generic descriptor. "app" adds no
+information — every listing on the App Store is an app.
+
 ## App tagline
 
 Shown under the name in search results.
@@ -87,7 +93,12 @@ Must match `app/lib/plans.ts` exactly — reviewers check this.
 | App URL | https://metavault-production.up.railway.app |
 | Privacy policy | https://metavault-production.up.railway.app/privacy |
 | Terms | https://metavault-production.up.railway.app/terms |
-| Support email | thakorrahul285@gmail.com |
+| Support email | metavaultsapp@gmail.com |
+
+The support email is public — it is the same address as `APP_CONTACT_EMAIL` and
+appears on `/privacy`, `/terms` and the in-app support page. It is deliberately
+**not** `SUPPORT_TO_EMAIL`, which routes in-app support requests to a personal
+inbox and must stay unpublished. Both are set on the Railway web service.
 
 ---
 
@@ -111,12 +122,46 @@ Capture on a development store with realistic data — an empty store makes the
 app look unfinished. Seed a handful of products with real metafield definitions
 first.
 
+### Production pipeline
+
+All ten pages have been captured and cropped to exact **2560×1440** and
+**1600×900**. Regenerate with:
+
+```bash
+python3 scripts/listing-screenshots.py <folder-of-raw-captures>
+```
+
+Feed it raw, uncropped window captures named `NN-slug-raw.png`. It crops the
+Shopify chrome, removes the dead gutter, and pads with the app canvas colour —
+crop and scale only, so the text stays the app's own pixels. **Never run listing
+screenshots through a generative image model**; see
+`docs/LISTING_SCREENSHOT_PROMPTS.md` for what that does to UI text.
+
+Capture in a window ~1590 CSS px wide to avoid the letterbox on the three
+full-width pages (Metafields, Metaobjects, Liquid snippets).
+
 ---
 
 ## Known gaps to resolve before submitting
 
-- **`app_subscriptions/update` webhook is not implemented.** Plan state is only
-  re-synced from Shopify when a merchant opens Plans & Billing, so a lapsed or
-  cancelled subscription can keep serving paid features until then.
-- Export/import CSVs in object storage have no retention policy (backups do).
-- File/image metaobject fields are GID text inputs, not a native picker.
+- ~~`app_subscriptions/update` webhook is not implemented.~~ **Resolved** in
+  commit `d8350ef`, released as app version `metavault-3`
+  (`app/routes/webhooks.app.subscriptions_update.tsx`). Plan state now re-syncs
+  on the webhook, so a lapsed subscription stops serving paid features.
+- Export/import CSVs in object storage have no retention policy (backups do,
+  enforced by the daily sweep in `app/jobs/cleanup.server.ts`).
+- File/image metaobject fields are GID text inputs, not a native picker. This is
+  why the Metaobjects screenshot shows raw `gid://shopify/...` values — shoot the
+  **New Arrivals Section** definition rather than Color.
+
+### Blocking the screenshots specifically
+
+Two test values are still in the store and appear in the Metafields capture.
+Neither can be fixed by cropping — they must be edited in the store, then the
+page re-captured:
+
+- `MINIMAL TEST — overwrote the previous value` (Woven Rattan Cat Cave Bed →
+  `custom.subheading`)
+- `Test badge` (Woven Rattan Cat Cave Bed → `custom.product_sell_badge`)
+- `First line of a multi-line value Second line proves the parser fix Third line`
+  (Organic Cotton Bath Towel → `custom.product_key_features`)
