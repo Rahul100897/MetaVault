@@ -3,7 +3,7 @@ import type { AdminClient } from "./metafields.server";
 
 // Defined locally (not imported from shopify.server) so worker processes don't
 // construct the full Shopify app — which would require SHOPIFY_APP_URL.
-const apiVersion = ApiVersion.April25;
+const apiVersion = ApiVersion.April26;
 
 /**
  * A minimal fetch-based Admin GraphQL client for use OUTSIDE a request context
