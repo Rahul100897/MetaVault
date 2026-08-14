@@ -2,11 +2,17 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { Page, Card, Text, BlockStack, InlineStack, Badge, Button } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import { assertInternalTools } from "../lib/internal.server";
 
 /**
  * Pre-submission checklist for the Shopify App Store. Some items are verified
  * automatically from the running config; the rest are manual reminders the
  * developer ticks off in the Partner Dashboard before submitting.
+ *
+ * INTERNAL TOOLING — not for merchants. It is deliberately absent from the
+ * sidebar and gated to the shops in INTERNAL_TOOLS_SHOPS; every other shop gets
+ * a 404. It reports our own compliance posture, which is meaningless to a
+ * merchant and actively bad for an App Store reviewer to stumble into.
  */
 
 type Status = "done" | "manual" | "todo";
@@ -18,7 +24,8 @@ type Item = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+  assertInternalTools(session.shop);
 
   const appUrl = process.env.SHOPIFY_APP_URL ?? "";
   const hasApiKey = Boolean(process.env.SHOPIFY_API_KEY);

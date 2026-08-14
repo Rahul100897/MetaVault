@@ -178,16 +178,9 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
-  {
-    label: "App Store Checklist",
-    to: "/app/checklist",
-    icon: (
-      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-        <path d="M9 11l3 3L22 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-  },
+  // NOTE: /app/checklist is deliberately NOT listed here. It is internal
+  // pre-submission tooling, gated to INTERNAL_TOOLS_SHOPS — merchants and App
+  // Store reviewers must never see it. Reach it by URL on an allowed shop.
   {
     label: "Plans & Billing",
     to: "/app/billing",
