@@ -42,6 +42,7 @@ export const QUEUE_NAMES = {
   IMPORT: "metavault-import",
   EXPORT: "metavault-export",
   BACKUP: "metavault-backup",
+  CLEANUP: "metavault-cleanup",
 } as const;
 
 export const importQueue = new Queue(QUEUE_NAMES.IMPORT, {
@@ -71,6 +72,21 @@ export const backupQueue = new Queue(QUEUE_NAMES.BACKUP, {
     backoff: { type: "exponential", delay: 2000 },
     removeOnComplete: { count: 50 },
     removeOnFail: { count: 25 },
+  },
+});
+
+/**
+ * Housekeeping sweep. Runs on a repeat schedule rather than per-request, so
+ * retries are cheap and a missed run is harmless — the next one picks up
+ * whatever is still expired.
+ */
+export const cleanupQueue = new Queue(QUEUE_NAMES.CLEANUP, {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: "exponential", delay: 5000 },
+    removeOnComplete: { count: 20 },
+    removeOnFail: { count: 20 },
   },
 });
 

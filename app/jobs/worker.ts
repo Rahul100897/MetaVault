@@ -7,8 +7,21 @@
 import { createExportWorker } from "./export.server";
 import { createImportWorker } from "./import.server";
 import { createBackupWorker } from "./backup.server";
+import { createCleanupWorker, scheduleCleanup } from "./cleanup.server";
 
-const workers = [createExportWorker(), createImportWorker(), createBackupWorker()];
+const workers = [
+  createExportWorker(),
+  createImportWorker(),
+  createBackupWorker(),
+  createCleanupWorker(),
+];
+
+// Registering the repeat schedule is idempotent, but it must not take the
+// worker process down if Redis is briefly unavailable at boot.
+scheduleCleanup().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error("[metavault] could not schedule the cleanup sweep:", err.message);
+});
 
 // eslint-disable-next-line no-console
 console.log(`[metavault] started ${workers.length} worker(s)`);
