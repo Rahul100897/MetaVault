@@ -103,6 +103,44 @@ model ActivityLog {
   @@index([createdAt])
 }
 
+/// A support request or piece of feedback sent from inside the app.
+///
+/// The row is the source of truth: it is committed before any email is
+/// attempted, so a submission can never be lost to a mail failure. The email to
+/// the app owner is a best-effort notification on top, and its outcome is
+/// recorded here (`emailedAt` / `emailError`) so a silent delivery failure is
+/// visible rather than invisible.
+model SupportRequest {
+  id      String @id @default(cuid())
+  shopId  String
+  /// suggestion | bug | question | billing | other
+  type    String
+  /// Feature area the merchant picked, for triage. Free-form, may be null.
+  area    String?
+  subject String
+  message String
+  /// Where a reply should go — prefilled from the store owner's email, editable.
+  replyEmail String
+  /// low | normal | blocking. Only collected for bug reports.
+  urgency    String?
+  /// Email on the session that submitted, when known. Not merchant-supplied.
+  staffEmail String?
+  /// Plan at submission time, so a report can be read in context.
+  plan       String  @default("free")
+  /// Opt-in technical context (shop, plan, app version, recent job outcomes).
+  /// Never customer or order data.
+  diagnostics Json?
+  /// new | open | closed — for triage; nothing in the merchant UI writes it.
+  status      String    @default("new")
+  emailedAt   DateTime?
+  emailError  String?
+  createdAt   DateTime  @default(now())
+
+  @@index([shopId])
+  @@index([createdAt])
+  @@index([status])
+}
+
 /// A deliberate, merchant-authorized link between two stores for cross-store
 /// copy. `shopA` generates a one-time `code`; `shopB` redeems it, which flips
 /// the link to "active". Copy is only ever permitted between an active pair, so

@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigation } from "@remix-run/react";
 import { SkeletonStyles } from "./Loader";
 import RouteSkeleton from "./RouteSkeleton";
+import { APP_VERSION } from "../lib/version";
 
 const NAV_ITEMS = [
   {
@@ -214,6 +215,21 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    label: "Help & Feedback",
+    to: "/app/support",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+        <path
+          d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
 ] as const;
 
 type Props = {
@@ -389,7 +405,7 @@ export default function AppLayout({ children, plan = "free" }: Props) {
           }}
         >
           <div style={{ color: "rgba(255,255,255,0.25)", fontSize: "11px" }}>
-            MetaVault v1.0.0
+            MetaVault v{APP_VERSION}
           </div>
         </div>
       </aside>

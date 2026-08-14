@@ -42,6 +42,8 @@ export type EmailPayload = {
   /** Plain-text part — some clients prefer it and filters expect it. */
   body: string;
   html: string;
+  /** Where a reply should go, when that differs from the sending address. */
+  replyTo?: string;
 };
 
 async function resolveRecipient(shopId: string): Promise<string | null> {
@@ -92,8 +94,16 @@ export function buildEmail(
  * Real delivery turns on the moment RESEND_API_KEY + RESEND_FROM are set (a
  * verified sender domain in Resend), with no code change. Without them, we log
  * the payload so nothing breaks in dev or before the provider is set up.
+ *
+ * Throws on a provider rejection. Job notifications swallow that (a
+ * notification must never fail the job); support requests record it instead —
+ * see `sendSupportEmail` in support.server.ts.
+ *
+ * Resolves `{ sent: false }` when there is no provider configured and the
+ * payload was only logged. Callers that record delivery must not treat that as
+ * a send, or the record claims a message went out when it never did.
  */
-async function deliver(payload: EmailPayload): Promise<void> {
+export async function sendEmail(payload: EmailPayload): Promise<{ sent: boolean }> {
   const apiKey = process.env.RESEND_API_KEY;
   // e.g. "MetaVault <notifications@yourdomain.com>" — must be a verified domain.
   const from = process.env.RESEND_FROM;
@@ -101,7 +111,7 @@ async function deliver(payload: EmailPayload): Promise<void> {
   if (!apiKey || !from) {
     // eslint-disable-next-line no-console
     console.log("[metavault][email] (not sent — Resend unconfigured)", JSON.stringify(payload));
-    return;
+    return { sent: false };
   }
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -116,6 +126,7 @@ async function deliver(payload: EmailPayload): Promise<void> {
       subject: payload.subject,
       text: payload.body,
       html: payload.html,
+      ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
     }),
   });
 
@@ -123,6 +134,8 @@ async function deliver(payload: EmailPayload): Promise<void> {
     const detail = await res.text().catch(() => "");
     throw new Error(`Resend ${res.status}: ${detail.slice(0, 200)}`);
   }
+
+  return { sent: true };
 }
 
 export async function notifyJobFinished(notification: JobNotification): Promise<void> {
@@ -134,7 +147,7 @@ export async function notifyJobFinished(notification: JobNotification): Promise<
       ? await getDownloadUrl(notification.fileKey, LINK_VALID_DAYS * 24 * 3600)
       : null;
 
-    await deliver(buildEmail(to, notification, downloadUrl));
+    await sendEmail(buildEmail(to, notification, downloadUrl));
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
