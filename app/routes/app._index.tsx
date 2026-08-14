@@ -15,6 +15,8 @@ import {
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getPlan } from "../lib/plan.server";
+import { countDefinitions } from "../lib/dashboard.server";
+import { formatDefinitionCount, type DefinitionCounts } from "../lib/dashboard";
 import { PLAN_DETAILS, type Plan } from "../lib/plans";
 import { MetaVaultLoader } from "../components/Loader";
 
@@ -25,7 +27,7 @@ import { MetaVaultLoader } from "../components/Loader";
  * blank frame while the data loads. The data streams in behind <Await/>.
  */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shopId = session.shop;
 
   // The effective plan (honors SHOP_PLAN_OVERRIDE in dev, ShopSettings in prod)
@@ -48,7 +50,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shopId, status: "completed" },
       orderBy: { createdAt: "desc" },
     }),
-  ]).then(([recentActivity, importJobsToday, lastBackup]) => ({
+    // Never let a stat card take the whole dashboard down: on a throttle or a
+    // scope error the tiles fall back to "—" and the rest still renders.
+    countDefinitions(admin).catch(() => null),
+  ]).then(([recentActivity, importJobsToday, lastBackup, definitionCounts]) => ({
     recentActivity: recentActivity.map((a) => ({
       id: a.id,
       action: a.action,
@@ -58,6 +63,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })),
     importJobsToday,
     lastBackup: lastBackup ? { createdAt: lastBackup.createdAt.toISOString() } : null,
+    definitionCounts,
   }));
 
   return defer({ plan, dashboard });
@@ -73,6 +79,7 @@ type DashboardData = {
   }>;
   importJobsToday: number;
   lastBackup: { createdAt: string } | null;
+  definitionCounts: DefinitionCounts | null;
 };
 
 function StatCard({
@@ -292,7 +299,7 @@ export default function DashboardPage() {
 }
 
 function DashboardBody({ data, plan }: { data: DashboardData; plan: Plan }) {
-  const { recentActivity, importJobsToday, lastBackup } = data;
+  const { recentActivity, importJobsToday, lastBackup, definitionCounts } = data;
   const lastBackupLabel = lastBackup
     ? formatRelativeTime(lastBackup.createdAt)
     : "Never";
@@ -302,8 +309,8 @@ function DashboardBody({ data, plan }: { data: DashboardData; plan: Plan }) {
         {/* Stats Cards */}
         <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
             <StatCard
-              label="Metafields"
-              value="—"
+              label="Metafield Definitions"
+              value={formatDefinitionCount(definitionCounts?.metafields)}
               accent="#6366F1"
               icon={
                 <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
@@ -326,8 +333,8 @@ function DashboardBody({ data, plan }: { data: DashboardData; plan: Plan }) {
               }
             />
             <StatCard
-              label="Metaobjects"
-              value="—"
+              label="Metaobject Definitions"
+              value={formatDefinitionCount(definitionCounts?.metaobjects)}
               accent="#8B5CF6"
               icon={
                 <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
