@@ -2,11 +2,14 @@
 
 client_id = "5a2865c40f0d0336af7e843686c54236"
 name = "MetaVault"
-application_url = "https://example.com"
+application_url = "https://metavault-production.up.railway.app"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+# Keep this false: `shopify app dev` would otherwise overwrite application_url
+# above with an ephemeral tunnel URL and break the deployed app until the next
+# `npm run deploy`.
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2026-04"
@@ -38,4 +41,8 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ ]
+redirect_urls = [
+  "https://metavault-production.up.railway.app/auth/callback",
+  "https://metavault-production.up.railway.app/auth/shopify/callback",
+  "https://metavault-production.up.railway.app/api/auth/callback"
+]
