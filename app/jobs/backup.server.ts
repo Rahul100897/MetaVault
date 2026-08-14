@@ -30,6 +30,13 @@ import { notifyJobFinished } from "../lib/notify.server";
 
 const RETENTION_DAYS = 30;
 
+/** Human-readable byte size for the notification email. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export type { Snapshot } from "./snapshot.server";
 
 async function runBackup(data: BackupJobData): Promise<void> {
@@ -82,7 +89,19 @@ async function runBackup(data: BackupJobData): Promise<void> {
       },
     });
 
-    await notifyJobFinished({ shopId, type: "backup", status: "completed", fileKey: key });
+    await notifyJobFinished({
+      shopId,
+      type: "backup",
+      status: "completed",
+      fileKey: key,
+      fileRole: "result",
+      stats: [
+        { label: "Metafields", value: String(metafields.length) },
+        { label: "Metaobjects", value: String(metaobjects.length) },
+        { label: "Snapshot size", value: formatBytes(Buffer.byteLength(body, "utf8")) },
+        { label: "Retained until", value: expiresAt.toISOString().slice(0, 10) },
+      ],
+    });
   } catch (err) {
     await prisma.backupJob.update({ where: { id: jobId }, data: { status: "failed" } });
     await notifyJobFinished({
@@ -230,7 +249,15 @@ async function runRestore(data: BackupJobData): Promise<void> {
       data: { shopId, action: "restore", resourceType: "snapshot", rowCount: success },
     });
 
-    await notifyJobFinished({ shopId, type: "restore", status: "completed" });
+    await notifyJobFinished({
+      shopId,
+      type: "restore",
+      status: "completed",
+      stats: [
+        { label: "Entries applied", value: String(success) },
+        { label: "Entries skipped", value: String(failed) },
+      ],
+    });
   } catch (err) {
     await prisma.importJob.update({
       where: { id: restoreJobId },

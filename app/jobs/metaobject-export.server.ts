@@ -67,7 +67,13 @@ export async function processMetaobjectExport(data: ExportJobData): Promise<void
       data: { status: "completed", fileUrl: key, completedAt: new Date() },
     });
 
-    await notifyJobFinished({ shopId, type: "export", status: "completed", fileKey: key });
+    await notifyJobFinished({
+      shopId,
+      type: "export",
+      status: "completed",
+      fileKey: key,
+      fileRole: "result",
+    });
   } catch (err) {
     await prisma.exportJob.update({
       where: { id: jobId },

@@ -12,8 +12,12 @@
 
 import prisma from "../db.server";
 import { getDownloadUrl } from "./r2.server";
+import { buildHtml, buildSubject, buildText, type Stat } from "./email-template.server";
 
 export type NotifiableJob = "import" | "export" | "backup" | "restore";
+
+/** How long a signed download link in an email stays valid. */
+const LINK_VALID_DAYS = 7;
 
 export type JobNotification = {
   shopId: string;
@@ -21,20 +25,23 @@ export type JobNotification = {
   status: "completed" | "failed";
   /** Storage key of the produced file; turned into a signed download link. */
   fileKey?: string | null;
+  /**
+   * What `fileKey` points at. An import's file is a report of REJECTED rows,
+   * not the import result — labelling it "Download" told merchants the wrong
+   * thing entirely.
+   */
+  fileRole?: "result" | "errorReport";
+  /** Figures worth stating outright, e.g. rows written vs rejected. */
+  stats?: Stat[];
   error?: string;
 };
 
 export type EmailPayload = {
   to: string;
   subject: string;
+  /** Plain-text part — some clients prefer it and filters expect it. */
   body: string;
-};
-
-const LABEL: Record<NotifiableJob, string> = {
-  import: "import",
-  export: "export",
-  backup: "backup",
-  restore: "restore",
+  html: string;
 };
 
 async function resolveRecipient(shopId: string): Promise<string | null> {
@@ -52,23 +59,30 @@ async function resolveRecipient(shopId: string): Promise<string | null> {
 
 export function buildEmail(
   to: string,
-  { type, status, error }: Pick<JobNotification, "type" | "status" | "error">,
+  {
+    type,
+    status,
+    error,
+    stats,
+    fileRole,
+  }: Pick<JobNotification, "type" | "status" | "error" | "stats" | "fileRole">,
   downloadUrl: string | null,
 ): EmailPayload {
-  const label = LABEL[type];
-  if (status === "failed") {
-    return {
-      to,
-      subject: `Your MetaVault ${label} failed`,
-      body: `Your ${label} failed. Error: ${error ?? "unknown error"}.`,
-    };
-  }
+  const input = {
+    type,
+    status,
+    error,
+    stats,
+    fileRole,
+    downloadUrl,
+    linkValidForDays: downloadUrl ? LINK_VALID_DAYS : undefined,
+  };
+
   return {
     to,
-    subject: `Your MetaVault ${label} is ready`,
-    body: downloadUrl
-      ? `Your ${label} is ready. ${downloadUrl}`
-      : `Your ${label} is ready.`,
+    subject: buildSubject(input),
+    body: buildText(input),
+    html: buildHtml(input),
   };
 }
 
@@ -101,6 +115,7 @@ async function deliver(payload: EmailPayload): Promise<void> {
       to: payload.to,
       subject: payload.subject,
       text: payload.body,
+      html: payload.html,
     }),
   });
 
@@ -116,7 +131,7 @@ export async function notifyJobFinished(notification: JobNotification): Promise<
     if (!to) return;
 
     const downloadUrl = notification.fileKey
-      ? await getDownloadUrl(notification.fileKey, 7 * 24 * 3600)
+      ? await getDownloadUrl(notification.fileKey, LINK_VALID_DAYS * 24 * 3600)
       : null;
 
     await deliver(buildEmail(to, notification, downloadUrl));

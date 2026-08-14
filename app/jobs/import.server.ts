@@ -107,7 +107,13 @@ export async function processImportJob(data: ImportJobData): Promise<void> {
       shopId,
       type: "import",
       status: "completed",
+      // Only set when rows were rejected — it's the report, not the result.
       fileKey: errorReportUrl,
+      fileRole: "errorReport",
+      stats: [
+        { label: "Rows written", value: String(successCount) },
+        { label: "Rows rejected", value: String(failures.length) },
+      ],
     });
   } catch (err) {
     await prisma.importJob.update({

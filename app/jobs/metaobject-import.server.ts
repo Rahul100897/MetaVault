@@ -96,6 +96,11 @@ export async function processMetaobjectImport(data: ImportJobData): Promise<void
       type: "import",
       status: "completed",
       fileKey: errorReportUrl,
+      fileRole: "errorReport",
+      stats: [
+        { label: "Entries written", value: String(success) },
+        { label: "Entries rejected", value: String(failures.length) },
+      ],
     });
   } catch (err) {
     await prisma.importJob.update({

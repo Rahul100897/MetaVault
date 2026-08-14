@@ -137,9 +137,11 @@ export async function processExportJob(data: ExportJobData): Promise<void> {
 
     // 3. Download + transform. A null url means the result set was empty.
     let csv = "";
+    let rowCount = 0;
     if (downloadUrl) {
       const jsonl = await (await fetch(downloadUrl)).text();
       const rows = transformBulkJsonl(jsonl, ownerType);
+      rowCount = rows.length;
       csv = generateCsv(rows);
     }
     if (!csv) {
@@ -156,7 +158,17 @@ export async function processExportJob(data: ExportJobData): Promise<void> {
       data: { status: "completed", fileUrl: key, completedAt: new Date() },
     });
 
-    await notifyJobFinished({ shopId, type: "export", status: "completed", fileKey: key });
+    await notifyJobFinished({
+      shopId,
+      type: "export",
+      status: "completed",
+      fileKey: key,
+      fileRole: "result",
+      stats: [
+        { label: "Resource type", value: OWNER_CONFIG[ownerType].label },
+        { label: "Metafields exported", value: String(rowCount) },
+      ],
+    });
   } catch (err) {
     await prisma.exportJob.update({
       where: { id: jobId },
