@@ -12,6 +12,7 @@
     "env": "shopify app env",
     "start": "remix-serve build/server/index.js",
     "worker": "tsx app/jobs/worker.ts",
+    "worker-start": "prisma generate && npm run worker",
     "docker-start": "npm run setup && npm run start",
     "setup": "prisma generate && prisma migrate deploy",
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
