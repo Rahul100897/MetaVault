@@ -1,7 +1,8 @@
 # MetaVault — session handover
 
 Written 2026-08-15. Covers the Railway deployment, App Store submission
-progress, and what is left. Read this before touching anything.
+progress, the Help & feedback page, and what is left. Read this before touching
+anything.
 
 ---
 
@@ -38,6 +39,27 @@ as `${{MetaVault.VAR}}`. That keeps one copy of every secret.
    perfectly healthy.
 4. **`package-lock.json` must stay committed.** The Shopify template gitignores
    it; `npm ci` in the Dockerfile fails without it.
+5. **Adding a variable in the Railway dashboard only *stages* it.** After you
+   click Add, the list says "15 Service Variables" and the variable looks
+   present — but an **"Apply 1 change"** banner and an **"Edited · 1 Change"**
+   badge on the service card mean it is in no container at all. This cost a
+   round trip on 2026-08-15: `SUPPORT_TO_EMAIL` appeared set while the app kept
+   resolving its fallback. **Click Deploy, confirm the banner clears**, then
+   verify from *inside* the container (service → Console → `printenv NAME`),
+   never from the variables list.
+6. **Don't use the Raw Editor to read variables.** It renders every value in
+   plaintext — `SHOPIFY_API_SECRET`, `RESEND_API_KEY`, the R2 keys — so it leaks
+   secrets into any screenshot or shared session. Single-variable entry keeps
+   values masked.
+7. **`npm run dev` is no longer consequence-free now that production exists.**
+   `scripts/dev.sh` rewrites `application_url` + `redirect_urls` in
+   `shopify.app.toml` to a quick tunnel, and its exit trap restores them to the
+   **`https://example.com` placeholder — not the Railway URL**. A `npm run
+   deploy` from that state would point the live app at `example.com`. It also
+   activates a dev store preview, which makes the production embedded app show
+   "refused to connect" until Dev Console → **Clean dev preview**. Do not start
+   the dev server just to eyeball a UI change; verify against the Railway deploy
+   instead, or `git checkout shopify.app.toml` and clear the preview afterwards.
 
 ---
 
@@ -91,6 +113,16 @@ loss prevention and incident response.
   the plan mirror synced on redirect.
 - **Email proven for the app owner only** — a real "Your MetaVault export is
   ready" arrived. See the limitation in §5.
+- **Help & feedback page live** (§8). `/app/support` returns 410 unauthenticated,
+  identical to `/app/settings`, while a nonexistent route returns 404 — so the
+  route is registered, and since `docker-start` is `setup && start`, the server
+  could not be serving unless `prisma migrate deploy` created `SupportRequest`.
+  A submission was stored and rendered in the merchant's history.
+- **Support email proven.** `SUPPORT_TO_EMAIL` verified present in the running
+  web container via `printenv`, and a POST to Resend from that container returned
+  **HTTP 200** (id `fc7e3f05-e4aa-40fe-9c5b-71ba01ff0bfb`). Still unexercised:
+  the route's own action end to end, which needs a submission from the admin —
+  the app is in a cross-origin iframe, so it can't be driven from here.
 
 ---
 
@@ -110,6 +142,8 @@ loss prevention and incident response.
 | `8e639e6` | Import UX: preview dismissed on submit, spinner, success banner; sample CSV download; documented that import upserts |
 | `3e4b1b5` | Designed HTML email templates + real job figures; fixed import emails that called the error report "your import" |
 | `e73e232` | Hid the Email notifications setting (see §5) |
+| `6c7ee84` | **Help & feedback page** — `/app/support`, `SupportRequest` model + migration, opt-in diagnostics, rate limit, merchant history. Extracted a shared `emailShell()`; job-template output verified byte-identical across 6 cases. Moved the hardcoded sidebar version into `APP_VERSION` |
+| `baa0db1` | **Stopped the support page publishing the private inbox.** The "Other ways to reach us" card rendered the same env chain the mailer routes with, so setting `SUPPORT_TO_EMAIL` — which must be a personal address for Resend's sandbox to deliver — would have shown it to every merchant. Public contact is now `APP_CONTACT_EMAIL` only |
 
 ---
 
@@ -130,7 +164,19 @@ To finish email: buy a domain, verify a *subdomain* in Resend
 (`mail.youragency.com` — keeps app-mail reputation away from company mail), then
 set `RESEND_FROM=metavault@mail.youragency.com`. No code change.
 
+**Support mail is the exception and already works.** The sandbox limitation is
+about the *recipient*, and a support request's recipient is the Resend account
+owner — so it needs no domain. `SUPPORT_TO_EMAIL` is set on the web service and
+proven (§3). Keep it distinct from `APP_CONTACT_EMAIL`: the former is private
+routing, the latter is what merchants are shown.
+
 **Other open items**
+
+- **`APP_CONTACT_EMAIL` is unset in production**, so the support page, `/privacy`
+  and `/terms` all display the `support@metavault.app` placeholder — a domain
+  that isn't ours, on pages App Store reviewers read. Set it to a real address on
+  a domain you control before submitting. Do **not** set it to the personal Gmail
+  in `SUPPORT_TO_EMAIL`; that address is deliberately never rendered.
 
 - **Listing screenshots** — minimum 1600×900. Capture with `Cmd+Shift+4` on a
   Retina display (2× pixels). Best screens: Backups (real snapshot with size and
@@ -183,7 +229,9 @@ If you are driving this with browser tools, these cost real time to rediscover:
   find → click the field's edit button → type, or `form_input` with a ref.
 - **Railway's canvas spawns a `function-bun` service from stray clicks.** It
   happened twice. It stages rather than deploys, so discard it from the
-  staged-changes panel. Prefer the **Raw Editor** for variables.
+  staged-changes panel. Work inside the service panel rather than on the canvas.
+  (Earlier advice here was to prefer the Raw Editor — **don't**; see §1 rule 6,
+  it shows every secret in plaintext. Use single-variable entry, then Deploy.)
 - **Screenshots cap at ~1568×742** (physical window) — below Shopify's listing
   minimum, and the tooling cannot write image files to disk.
 - Product metafields are far easier to edit at
@@ -191,17 +239,59 @@ If you are driving this with browser tools, these cost real time to rediscover:
 
 ---
 
-## 8. Next task: feedback / support page
+## 8. Help & feedback page — shipped
 
-Not started. The owner wants an in-app page where merchants can reach them:
-suggestions, bug reports, and help using a feature. Requirements as stated:
+Live at `/app/support`, nav item at the bottom of the sidebar. Commits `6c7ee84`
+and `baa0db1`.
 
-- A proper form covering all of those cases
-- Standard, good design — consistent with the rest of the app (Polaris, the
-  navy `#0A0F1E` / indigo `#6366F1` palette)
-- All the options present
+### How a submission reaches the owner
 
-Nothing has been designed or decided yet — no route, no schema, no delivery
-mechanism. **Note the tension worth raising:** the obvious delivery channel is
-email, which is exactly what was just switched off. So how a submission actually
-reaches the owner needs deciding before building the form.
+The §5 tension resolved once the *direction* of the mail was noticed. Resend's
+sandbox sender fails for merchant notifications because the recipient is a
+merchant; a support request's recipient is the Resend account owner. So it works
+today with no domain purchase.
+
+**Postgres is the source of truth. Email is best-effort on top.** The
+`SupportRequest` row is committed *before* any send is attempted, so a submission
+can never be lost to a mail failure, and the outcome is written back
+(`emailedAt` / `emailError`) so a silent failure is discoverable. `sendEmail`
+returns `{ sent }` — without that, an unconfigured provider logged the payload
+and returned normally, which would have stamped `emailedAt` on mail that never
+went out.
+
+Owner reads submissions from the email or straight from Postgres; there is
+deliberately **no owner console** inside the merchant app.
+
+### Decisions worth not relitigating
+
+- **No plan gating.** Support is reachable on Free — gating bug reports means not
+  hearing about bugs from the plan most likely to hit them. Abuse is handled by a
+  rate limit instead: 5 per shop per hour, plus identical-message dedupe within
+  5 minutes.
+- **Diagnostics are opt-in**, disclosed verbatim before sending, and carry shop /
+  plan / app version / browser / last 5 job outcomes — **never** customer, order
+  or product data, which matters given the Protected Customer Data commitments.
+- **Attachments are out of scope.** They need an R2 upload pipeline plus a
+  retention decision; that is its own task.
+- Merchants see their own submission history, so they don't resend out of doubt.
+
+### Files
+
+`app/routes/app.support.tsx` (route), `app/lib/support.ts` (client-safe
+vocabulary + the one validation function both sides run), `app/lib/support.server.ts`
+(persist → notify, diagnostics, rate limit, history, owner template),
+`app/lib/version.ts` (`APP_VERSION`), `prisma/migrations/20260814194945_support_requests`.
+
+`email-template.server.ts` now exports a shared `emailShell()` plus palette and
+`escapeHtml`; the job templates were verified byte-identical after that refactor,
+so don't assume they changed.
+
+### What's left
+
+- **Submit one request from the admin.** Everything else is proven (§3); the
+  route's own action end to end is not, because the app runs in a cross-origin
+  iframe and can't be driven from a tooling session.
+- Consider contextual "Report a problem" links from other pages — the route
+  already accepts `?type=bug&area=Backups%20%26%20restore` to preselect the form.
+- The first submission ("Add specific metafield export") is stored with an
+  `emailError`, from before `SUPPORT_TO_EMAIL` was applied. Nothing was lost.
