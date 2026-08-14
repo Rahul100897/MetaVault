@@ -96,8 +96,15 @@ this list.
 
 - [ ] Wire a real email provider (§6).
 - [ ] Request Protected Customer Data access (§4).
-- [ ] (Optional/among asks) Native-style metafields search/filter — client-side
-      facets over loaded rows, with a "Load all" for full filtering.
+- [ ] **File/image metaobject fields** in the Add/Edit drawer are still
+      GID/URL text inputs — App Bridge has no file picker and the app lacks
+      `read_files`/`write_files` scope. A native "Change file" flow would need
+      those scopes + a `stagedUploadsCreate` → upload → `fileCreate` pipeline.
+      Product/variant/collection references already use the native resource
+      picker.
+- [ ] Metafields filter is **client-side over loaded rows** (Shopify has no
+      server-side metafield search). Consider a "Load all" (bulk) option for
+      complete filtering on large catalogs.
 
 ---
 
