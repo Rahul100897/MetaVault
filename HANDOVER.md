@@ -172,6 +172,19 @@ routing, the latter is what merchants are shown.
 
 **Other open items**
 
+- **`/app/checklist` is internal tooling and is now gated** (commit `4628990`).
+  It was in the merchant sidebar with no gate, so every merchant — and any App
+  Store reviewer — could read our own compliance posture. It is out of
+  `NAV_ITEMS` and behind `assertInternalTools()` (`app/lib/internal.server.ts`),
+  which **fails closed**: with `INTERNAL_TOOLS_SHOPS` unset, nobody in production
+  reaches it, and it 404s rather than 403s so the route looks nonexistent.
+  **Currently unset, so the page 404s for us too.** To use it again, set
+  `INTERNAL_TOOLS_SHOPS=rahul-developer-store.myshopify.com` on the web service.
+  Everything it reports is duplicated in §2, so leaving it dead is fine.
+  Do not re-add it to the sidebar.
+- `app/routes/app.additional.tsx` (Shopify template boilerplate, reachable and
+  talking about "the app template") was deleted in `4628990`. `/app/additional`
+  now returns 404 in production.
 - **`APP_CONTACT_EMAIL` is unset in production**, so the support page, `/privacy`
   and `/terms` all display the `support@metavault.app` placeholder — a domain
   that isn't ours, on pages App Store reviewers read. Set it to a real address on
