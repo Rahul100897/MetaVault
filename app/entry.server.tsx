@@ -57,3 +57,28 @@ export default async function handleRequest(
     setTimeout(abort, streamTimeout + 1000);
   });
 }
+
+/**
+ * Server-side error logging.
+ *
+ * Remix calls this for every unhandled loader/action/render error. Without it,
+ * a failure that reaches the error boundary leaves no trace in the Railway
+ * logs, so an intermittent problem is invisible after the fact — which is
+ * exactly the position we were in when the "Application Error" screen appeared
+ * and the logs showed nothing but 200s.
+ *
+ * Aborted requests (merchant navigated away mid-flight) are not errors and are
+ * skipped, or they drown out the real ones.
+ */
+export function handleError(
+  error: unknown,
+  { request }: { request: Request },
+) {
+  if (request.signal.aborted) return;
+
+  const detail = error instanceof Error ? error.stack || error.message : String(error);
+  // eslint-disable-next-line no-console
+  console.error(
+    `[metavault] unhandled error on ${request.method} ${new URL(request.url).pathname}\n${detail}`,
+  );
+}
