@@ -1,8 +1,7 @@
 # MetaVault production image.
-# Railway uses nixpacks (see railway.json); this Dockerfile is kept correct as a
-# fallback / for local container builds. The web service runs `docker-start`
-# (prisma migrate deploy + serve); override the command to `npm run worker` for
-# the worker service.
+# Both Railway services build from this file (see railway.json /
+# railway.worker.json). The web service runs `docker-start` (prisma migrate
+# deploy + serve); the worker overrides the command to `npm run worker`.
 FROM node:20-alpine
 RUN apk add --no-cache openssl
 

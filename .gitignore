@@ -15,7 +15,7 @@ database.sqlite
 .env.*
 !.env.example
 
-package-lock.json
+# package-lock.json is committed: the Docker build runs `npm ci`, which needs it.
 yarn.lock
 pnpm-lock.yaml
 
