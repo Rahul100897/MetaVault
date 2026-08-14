@@ -71,6 +71,103 @@ function safeParse(v: string): Date | undefined {
   }
 }
 
+// --- Resource reference fields (native "Select products" experience) ---------
+
+type PickerResource = "product" | "variant" | "collection";
+
+/** Which App Bridge resource picker (if any) backs a metaobject field type. */
+function referencePicker(
+  fieldType: string,
+): { resource: PickerResource; multiple: boolean } | null {
+  const multiple = fieldType.startsWith("list.");
+  const base = fieldType.replace(/^list\./, "");
+  if (base === "product_reference") return { resource: "product", multiple };
+  if (base === "variant_reference") return { resource: "variant", multiple };
+  if (base === "collection_reference") return { resource: "collection", multiple };
+  return null;
+}
+
+/** Reference values are a single GID, or a JSON array of GIDs for list.* types. */
+function parseRefs(value: string, multiple: boolean): string[] {
+  if (!value) return [];
+  if (multiple) {
+    try {
+      const arr = JSON.parse(value);
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [value];
+    }
+  }
+  return [value];
+}
+
+function serializeRefs(ids: string[], multiple: boolean): string {
+  return multiple ? JSON.stringify(ids) : (ids[0] ?? "");
+}
+
+const RESOURCE_PLURAL: Record<PickerResource, string> = {
+  product: "products",
+  variant: "variants",
+  collection: "collections",
+};
+
+function ReferenceField({
+  label,
+  value,
+  onChange,
+  resource,
+  multiple,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  resource: PickerResource;
+  multiple: boolean;
+}) {
+  const shopify = useAppBridge();
+  const ids = parseRefs(value, multiple);
+  const plural = RESOURCE_PLURAL[resource];
+
+  const openPicker = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const selection = (await (shopify as any).resourcePicker({
+      type: resource,
+      multiple,
+      selectionIds: ids.map((id) => ({ id })),
+    })) as Array<{ id: string }> | undefined;
+    if (!selection) return; // cancelled
+    onChange(serializeRefs(selection.map((r) => r.id), multiple));
+  };
+
+  return (
+    <BlockStack gap="150">
+      <Text as="span" variant="bodySm" fontWeight="medium">
+        {label}
+      </Text>
+      {ids.length > 0 ? (
+        <InlineStack gap="200" blockAlign="center">
+          <Text as="span" variant="bodySm" tone="subdued">
+            {ids.length} {ids.length === 1 ? resource : plural} selected
+          </Text>
+          <Button size="slim" onClick={openPicker}>
+            Change
+          </Button>
+          <Button
+            size="slim"
+            variant="plain"
+            tone="critical"
+            onClick={() => onChange(serializeRefs([], multiple))}
+          >
+            Clear
+          </Button>
+        </InlineStack>
+      ) : (
+        <Button onClick={openPicker}>Select {multiple ? plural : resource}</Button>
+      )}
+    </BlockStack>
+  );
+}
+
 export default function MetaobjectDrawer({
   open,
   mode,
@@ -306,6 +403,20 @@ export default function MetaobjectDrawer({
                     onChange={(v) => setFieldValue(f.key, v)}
                     autoComplete="off"
                     helpText={kind === "json" ? "JSON value" : undefined}
+                  />
+                );
+              }
+              // Product / variant / collection references → native resource picker.
+              const ref = referencePicker(f.type);
+              if (ref) {
+                return (
+                  <ReferenceField
+                    key={f.key}
+                    label={label}
+                    value={val}
+                    onChange={(v) => setFieldValue(f.key, v)}
+                    resource={ref.resource}
+                    multiple={ref.multiple}
                   />
                 );
               }

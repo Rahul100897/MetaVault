@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
-import { Page, Button, Text, BlockStack, InlineStack, Badge, Modal } from "@shopify/polaris";
+import {
+  Page,
+  Button,
+  Text,
+  BlockStack,
+  InlineStack,
+  Badge,
+  Modal,
+  Filters,
+  ChoiceList,
+} from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -325,6 +335,8 @@ export default function MetafieldsPage() {
   const [cursor, setCursor] = useState<string | null>(page.endCursor);
   const [hasNext, setHasNext] = useState<boolean>(page.hasNextPage);
   const [search, setSearch] = useState("");
+  const [namespaceFilter, setNamespaceFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
 
   // Inline editing
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -495,17 +507,65 @@ export default function MetafieldsPage() {
     loadMore.load(`/app/metafields?owner=${ownerType}&after=${encodeURIComponent(cursor)}`);
   };
 
+  // Facet options are derived from the loaded rows.
+  const namespaceOptions = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => r.namespace)))
+        .sort()
+        .map((n) => ({ label: n, value: n })),
+    [rows],
+  );
+  const typeOptions = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => r.type)))
+        .sort()
+        .map((t) => ({ label: t, value: t })),
+    [rows],
+  );
+
+  const hasActiveFilter =
+    search.trim() !== "" || namespaceFilter.length > 0 || typeFilter.length > 0;
+
   const filteredRows = useMemo(() => {
-    if (!search.trim()) return rows;
-    const q = search.toLowerCase();
-    return rows.filter(
-      (r) =>
-        r.namespace.toLowerCase().includes(q) ||
-        r.key.toLowerCase().includes(q) ||
-        r.ownerLabel.toLowerCase().includes(q) ||
-        r.value.toLowerCase().includes(q),
-    );
-  }, [rows, search]);
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (namespaceFilter.length && !namespaceFilter.includes(r.namespace)) return false;
+      if (typeFilter.length && !typeFilter.includes(r.type)) return false;
+      if (
+        q &&
+        !(
+          r.namespace.toLowerCase().includes(q) ||
+          r.key.toLowerCase().includes(q) ||
+          r.ownerLabel.toLowerCase().includes(q) ||
+          r.value.toLowerCase().includes(q)
+        )
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [rows, search, namespaceFilter, typeFilter]);
+
+  const appliedFilters = [
+    ...(namespaceFilter.length
+      ? [
+          {
+            key: "namespace",
+            label: `Namespace: ${namespaceFilter.join(", ")}`,
+            onRemove: () => setNamespaceFilter([]),
+          },
+        ]
+      : []),
+    ...(typeFilter.length
+      ? [
+          {
+            key: "type",
+            label: `Type: ${typeFilter.join(", ")}`,
+            onRemove: () => setTypeFilter([]),
+          },
+        ]
+      : []),
+  ];
 
   // --- Bulk selection (Task 4) ---
   const selectedSet = useMemo(() => new Set(selected), [selected]);
@@ -596,55 +656,79 @@ export default function MetafieldsPage() {
           </InlineStack>
         </div>
 
-        {/* Owner-type tabs + search */}
-        <InlineStack align="space-between" blockAlign="center" gap="300">
-          <div style={{ display: "flex", gap: "4px", background: "#FFFFFF", padding: "4px", borderRadius: "10px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
-            {OWNER_TYPES.map((t) => {
-              const active = t === ownerType;
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  className="mv-owner-tab"
-                  onClick={() => handleOwnerChange(t)}
-                  style={{
-                    border: "none",
-                    borderRadius: "8px",
-                    padding: "8px 16px",
-                    fontSize: "13px",
-                    fontWeight: active ? 600 : 500,
-                    color: active ? "#FFFFFF" : "#4B5563",
-                    background: active ? "linear-gradient(135deg, #6366F1, #8B5CF6)" : "transparent",
-                  }}
-                >
-                  {OWNER_CONFIG[t].label}
-                </button>
-              );
-            })}
-          </div>
+        {/* Owner-type tabs */}
+        <div style={{ display: "flex", gap: "4px", background: "#FFFFFF", padding: "4px", borderRadius: "10px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", width: "fit-content" }}>
+          {OWNER_TYPES.map((t) => {
+            const active = t === ownerType;
+            return (
+              <button
+                key={t}
+                type="button"
+                className="mv-owner-tab"
+                onClick={() => handleOwnerChange(t)}
+                style={{
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "8px 16px",
+                  fontSize: "13px",
+                  fontWeight: active ? 600 : 500,
+                  color: active ? "#FFFFFF" : "#4B5563",
+                  background: active ? "linear-gradient(135deg, #6366F1, #8B5CF6)" : "transparent",
+                }}
+              >
+                {OWNER_CONFIG[t].label}
+              </button>
+            );
+          })}
+        </div>
 
-          <div style={{ position: "relative", width: "260px" }}>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter loaded rows…"
-              style={{
-                width: "100%",
-                padding: "8px 12px 8px 34px",
-                borderRadius: "8px",
-                border: "1px solid #E5E7EB",
-                fontSize: "13px",
-                outline: "none",
-                background: "#FFFFFF",
-              }}
-            />
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: "absolute", left: "10px", top: "9px" }}>
-              <circle cx="11" cy="11" r="7" stroke="#9CA3AF" strokeWidth="2" />
-              <path d="M21 21l-4-4" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </div>
-        </InlineStack>
+        {/* Filter bar (Shopify-native style, over loaded rows) */}
+        <div style={{ background: "#FFFFFF", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", overflow: "hidden" }}>
+          <Filters
+            queryValue={search}
+            queryPlaceholder="Search namespace, key, owner or value…"
+            onQueryChange={setSearch}
+            onQueryClear={() => setSearch("")}
+            onClearAll={() => {
+              setSearch("");
+              setNamespaceFilter([]);
+              setTypeFilter([]);
+            }}
+            appliedFilters={appliedFilters}
+            filters={[
+              {
+                key: "namespace",
+                label: "Namespace",
+                shortcut: true,
+                filter: (
+                  <ChoiceList
+                    title="Namespace"
+                    titleHidden
+                    allowMultiple
+                    choices={namespaceOptions}
+                    selected={namespaceFilter}
+                    onChange={setNamespaceFilter}
+                  />
+                ),
+              },
+              {
+                key: "type",
+                label: "Type",
+                shortcut: true,
+                filter: (
+                  <ChoiceList
+                    title="Type"
+                    titleHidden
+                    allowMultiple
+                    choices={typeOptions}
+                    selected={typeFilter}
+                    onChange={setTypeFilter}
+                  />
+                ),
+              },
+            ]}
+          />
+        </div>
 
         {/* Bulk action bar */}
         {someSelected && (
@@ -913,7 +997,7 @@ export default function MetafieldsPage() {
                 }}
               >
                 <Text as="span" variant="bodySm" tone="subdued">
-                  {search.trim()
+                  {hasActiveFilter
                     ? `${filteredRows.length} of ${rows.length} rows`
                     : `${rows.length} row${rows.length === 1 ? "" : "s"} loaded`}
                 </Text>
