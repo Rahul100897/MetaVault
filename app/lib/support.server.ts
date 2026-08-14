@@ -35,7 +35,14 @@ import {
 import { APP_VERSION } from "./version";
 import type { Plan } from "./plans";
 
-/** Where support mail goes. Falls back to the address on the legal pages. */
+/**
+ * Where support mail is routed. PRIVATE — this is very likely a personal
+ * address, so it must never be rendered into a merchant-facing page or returned
+ * from a loader. The public contact address merchants see is APP_CONTACT_EMAIL.
+ *
+ * With Resend's sandbox sender this MUST be the Resend account owner's address,
+ * or every send is rejected 403 and only lands in `emailError`.
+ */
 function supportInbox(): string {
   return (
     process.env.SUPPORT_TO_EMAIL ??

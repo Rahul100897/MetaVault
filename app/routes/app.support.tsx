@@ -80,10 +80,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       area: (AREAS as readonly string[]).includes(areaParam) ? areaParam : "",
     },
     history,
-    supportEmail:
-      process.env.SUPPORT_TO_EMAIL ??
-      process.env.APP_CONTACT_EMAIL ??
-      "support@metavault.app",
+    // The PUBLIC contact address, shown to merchants — the same one on the
+    // legal pages. Deliberately NOT SUPPORT_TO_EMAIL: that is the private
+    // inbox we route requests to and is very likely a personal address, which
+    // must never be rendered into a merchant-facing page.
+    publicContactEmail: process.env.APP_CONTACT_EMAIL ?? "support@metavault.app",
   };
 };
 
@@ -338,7 +339,8 @@ function HistoryCard({ history }: { history: SupportRequestSummary[] }) {
 }
 
 export default function SupportPage() {
-  const { shopId, plan, prefill, history, supportEmail } = useLoaderData<typeof loader>();
+  const { shopId, plan, prefill, history, publicContactEmail } =
+    useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const fetcher = useFetcher<typeof action>();
 
@@ -649,8 +651,10 @@ export default function SupportPage() {
             </Text>
             <Text as="p" variant="bodySm" tone="subdued">
               Prefer your own inbox? Email{" "}
-              <PolarisLink url={`mailto:${supportEmail}?subject=MetaVault%20—%20${encodeURIComponent(shopId)}`}>
-                {supportEmail}
+              <PolarisLink
+                url={`mailto:${publicContactEmail}?subject=MetaVault%20—%20${encodeURIComponent(shopId)}`}
+              >
+                {publicContactEmail}
               </PolarisLink>{" "}
               and mention your store address ({shopId}) so we can find your account.
             </Text>
