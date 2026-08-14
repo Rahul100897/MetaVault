@@ -11,6 +11,7 @@ import {
   Select,
   Banner,
   Badge,
+  Spinner,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -149,12 +150,23 @@ export default function ImportExportPage() {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [dragging, setDragging] = useState(false);
+  /** Set once an import is queued, so the preview gives way to a result panel. */
+  const [importResult, setImportResult] = useState<{ rows: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Row count captured at submit time — the preview is gone by the time we report it. */
+  const queuedRows = useRef(0);
 
   const preview =
     validateFetcher.data?.ok && validateFetcher.data.intent === "validate"
       ? validateFetcher.data
       : null;
+
+  const importing = importFetcher.state !== "idle";
+
+  // Remix keeps a fetcher's data until its next submit, so the preview would
+  // otherwise linger after Clear or after a queued import. Gate it on the
+  // filename instead, which both of those reset.
+  const showPreview = preview !== null && fileName !== "" && !importing && !importResult;
 
   // Toasts for import + export results.
   useEffect(() => {
@@ -162,6 +174,7 @@ export default function ImportExportPage() {
     const d = importFetcher.data;
     if (d.ok && d.intent === "import") {
       shopify.toast.show("Import started — track progress in Jobs");
+      setImportResult({ rows: queuedRows.current });
       setCsvText("");
       setFileName("");
     } else if (!d.ok) {
@@ -203,7 +216,38 @@ export default function ImportExportPage() {
   };
 
   const runImport = () => {
+    queuedRows.current = preview?.valid ?? 0;
     importFetcher.submit({ intent: "import", csvText }, { method: "post" });
+  };
+
+  /** Back to the dropzone for another file. */
+  const resetImport = () => {
+    setImportResult(null);
+    setCsvText("");
+    setFileName("");
+  };
+
+  /**
+   * A template so merchants can see the expected shape before they build a
+   * file. Generated client-side — no round trip, and it always matches the
+   * columns the validator actually requires.
+   */
+  const downloadSample = () => {
+    const sample = [
+      "owner_id,namespace,key,type,value",
+      'gid://shopify/Product/1234567890,custom,subheading,single_line_text_field,Woven in a family mill since 1946',
+      'gid://shopify/Product/1234567890,custom,care_guide,multi_line_text_field,"Machine wash at 30°C.\nDry flat, away from direct sun.\nWarm iron if needed."',
+      'gid://shopify/Product/1234567890,custom,launch_date,date,2026-03-01',
+      'gid://shopify/Collection/9876543210,custom,subheading,single_line_text_field,"Everything linen, in one place"',
+      'gid://shopify/Customer/1122334455,custom,vip_tier,single_line_text_field,Gold',
+    ].join("\n");
+
+    const url = URL.createObjectURL(new Blob([sample], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "metavault-import-sample.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const runExport = () => {
@@ -317,8 +361,14 @@ export default function ImportExportPage() {
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
                 Upload a CSV with columns: owner_id, namespace, key, type, value.
-                We&apos;ll validate it before anything is written.
+                We&apos;ll validate it before anything is written. A row whose
+                namespace and key already exist on that owner is overwritten.
               </Text>
+              <InlineStack>
+                <Button variant="plain" onClick={downloadSample}>
+                  Download a sample CSV
+                </Button>
+              </InlineStack>
             </BlockStack>
 
             {/* Dropzone */}
@@ -371,8 +421,50 @@ export default function ImportExportPage() {
               </BlockStack>
             </div>
 
+            {/* In-flight: the preview is dismissed so the table can't be
+                mistaken for something still awaiting confirmation. */}
+            {importing && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "20px",
+                  border: "1px solid #E5E7EB",
+                  borderRadius: "10px",
+                  background: "#FAFAFB",
+                }}
+              >
+                <Spinner size="small" />
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodyMd" fontWeight="medium">
+                    Queueing your import…
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Uploading the file and handing it to the worker.
+                  </Text>
+                </BlockStack>
+              </div>
+            )}
+
+            {/* Queued: rows are written in the background, so point at Jobs
+                rather than implying the work is already finished. */}
+            {importResult && !importing && (
+              <Banner
+                tone="success"
+                title={`Import queued — ${importResult.rows} row${importResult.rows === 1 ? "" : "s"}`}
+                action={{ content: "View jobs", url: "/app/jobs" }}
+                secondaryAction={{ content: "Import another file", onAction: resetImport }}
+              >
+                <Text as="p" variant="bodySm">
+                  Rows are written in the background. Jobs shows progress, the
+                  final count, and an error report if any row was rejected.
+                </Text>
+              </Banner>
+            )}
+
             {/* Validation result */}
-            {preview && (
+            {showPreview && (
               <BlockStack gap="300">
                 {preview.missingColumns.length > 0 && (
                   <Banner tone="critical" title="Missing required columns">
@@ -458,18 +550,11 @@ export default function ImportExportPage() {
                 </div>
 
                 <InlineStack align="end" gap="200">
-                  <Button
-                    onClick={() => {
-                      setCsvText("");
-                      setFileName("");
-                    }}
-                  >
-                    Clear
-                  </Button>
+                  <Button onClick={resetImport}>Clear</Button>
                   <Button
                     variant="primary"
                     disabled={preview.valid === 0}
-                    loading={importFetcher.state !== "idle"}
+                    loading={importing}
                     onClick={runImport}
                   >
                     {`Import ${preview.valid} valid row${preview.valid === 1 ? "" : "s"}`}
