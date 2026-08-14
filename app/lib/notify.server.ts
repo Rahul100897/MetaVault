@@ -72,10 +72,42 @@ export function buildEmail(
   };
 }
 
-/** Hand the payload to the email provider. Console-only until one is wired. */
+/**
+ * Send the email through Resend when configured, else log it.
+ *
+ * Real delivery turns on the moment RESEND_API_KEY + RESEND_FROM are set (a
+ * verified sender domain in Resend), with no code change. Without them, we log
+ * the payload so nothing breaks in dev or before the provider is set up.
+ */
 async function deliver(payload: EmailPayload): Promise<void> {
-  // eslint-disable-next-line no-console
-  console.log("[metavault][email]", JSON.stringify(payload));
+  const apiKey = process.env.RESEND_API_KEY;
+  // e.g. "MetaVault <notifications@yourdomain.com>" — must be a verified domain.
+  const from = process.env.RESEND_FROM;
+
+  if (!apiKey || !from) {
+    // eslint-disable-next-line no-console
+    console.log("[metavault][email] (not sent — Resend unconfigured)", JSON.stringify(payload));
+    return;
+  }
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: payload.to,
+      subject: payload.subject,
+      text: payload.body,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Resend ${res.status}: ${detail.slice(0, 200)}`);
+  }
 }
 
 export async function notifyJobFinished(notification: JobNotification): Promise<void> {

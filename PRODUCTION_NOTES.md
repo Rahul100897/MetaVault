@@ -77,10 +77,12 @@ this list.
 
 ## 6. Email notifications
 
-- 🟡 **Notifications are console-only.** `app/lib/notify.server.ts` builds the
-  email payload and `console.log`s it — no real emails are sent. Wire a provider
-  (Resend / SendGrid / Postmark) in `deliver()` before promising email delivery
-  to merchants. Recipient resolution + opt-out toggle are already implemented.
+- 🟡 **Email is Resend, env-gated.** `app/lib/notify.server.ts` sends job
+  emails via Resend when `RESEND_API_KEY` + `RESEND_FROM` are set; otherwise it
+  logs the payload (no dead behavior). To turn it on in prod: create a Resend
+  account, **verify a sender domain** (DNS records), set both env vars on the
+  **web and worker** services. Recipient resolution + Settings opt-out toggle
+  already work. Delivery is best-effort — a send failure never fails the job.
 
 ## 7. App Store submission
 
