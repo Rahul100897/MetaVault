@@ -4,6 +4,14 @@ Written 2026-08-15. Covers the Railway deployment, App Store submission
 progress, the Help & feedback page, and what is left. Read this before touching
 anything.
 
+**Where things stand in one paragraph:** the app is live on Railway and healthy.
+The App Store listing is filled in and saved with **one blocker left — a
+screencast video**. The AI self review has been run (30 pass, 0 fail, 1 needs
+review) and marked done. Paid plans now have **no free trial**, deliberately.
+The next real engineering task is the **dead offline access token in §5**, which
+silently breaks cross-store copy. The next commercial task is **buying the
+agency domain**, which unblocks the public contact address and merchant email.
+
 ---
 
 ## 1. Where the app runs
@@ -90,9 +98,28 @@ Partners org `1991389`, app id `390008537089`. Dev Dashboard org `129777563`.
 | Protected customer data request | ✅ 16/16 |
 | Automated checks for common errors | ✅ passed |
 | Embedded app checks | ✅ passed |
-| **Create listing content** | ❌ needs screenshots |
-| **Run AI self review** | ❌ optional |
-| **Submit for review** | ❌ |
+| **Create listing content** | 🟡 filled and saved — **1 issue left: Screencast URL** |
+| **Run AI self review** | ✅ run, and marked done in the dashboard |
+| **Submit for review** | ❌ blocked only by the screencast |
+
+**The listing is otherwise complete.** Name, category (Store design › Content ›
+Metafields), category details, language, introduction, details, 5 features,
+subtitle, 5 search terms, privacy policy URL, support/review/submission emails,
+install requirements, test-account answer, testing instructions, 3 desktop
+screenshots + feature media, and 3 public pricing plans are all entered and
+saved. Everything entered is mirrored in `APP_STORE_LISTING.md` so it never has
+to be retyped.
+
+**The only remaining blocker is a screencast**: a 3–8 minute video showing
+onboarding and core functionality, hosted anywhere public (unlisted YouTube is
+fine). It is for reviewers, not the public listing. A suggested shot list is in
+`APP_STORE_LISTING.md`.
+
+Two traps found while filling it in, both already cleaned up — but they recur if
+you re-edit the form: repeated **Save** attempts **duplicate the Features list**
+(it reached 30 entries against a max of 5), and clicking **Add** under
+Screenshots creates an empty slot that then fails validation with "An image is
+required" (15 had accumulated).
 
 PCD request: data use = *Protected customer data* + the *Name* field, both with
 reason **Store management**. The 16 data-protection answers are backed by
@@ -144,6 +171,11 @@ loss prevention and incident response.
 | `e73e232` | Hid the Email notifications setting (see §5) |
 | `6c7ee84` | **Help & feedback page** — `/app/support`, `SupportRequest` model + migration, opt-in diagnostics, rate limit, merchant history. Extracted a shared `emailShell()`; job-template output verified byte-identical across 6 cases. Moved the hardcoded sidebar version into `APP_VERSION` |
 | `baa0db1` | **Stopped the support page publishing the private inbox.** The "Other ways to reach us" card rendered the same env chain the mailer routes with, so setting `SUPPORT_TO_EMAIL` — which must be a personal address for Resend's sandbox to deliver — would have shown it to every merchant. Public contact is now `APP_CONTACT_EMAIL` only |
+| `4628990` | **Kept developer-only surfaces out of the merchant app.** "App Store Checklist" was in the sidebar with no gate — every merchant and any reviewer could read our own compliance posture. Now gated by `assertInternalTools()`, which **fails closed** and 404s rather than 403s. Also deleted `app.additional.tsx`, untouched Shopify template boilerplate that was still reachable |
+| `f228ea6` | **Replaced the bare "Application Error" screen.** `root.tsx` had no ErrorBoundary, so anything a route boundary didn't handle fell through to Remix's default: two words over an empty box. Added a branded `Layout` + `ErrorBoundary`, and `handleError` in `entry.server.tsx` — without it such failures left **no trace in the logs**, which is exactly why an incident showed an error screen while the logs held nothing but 200s |
+| `b9af335` | **Reset the plan mirror on uninstall.** Found by the AI self review against requirement 1.2.2. Uninstall deleted only the session; `ShopSettings` kept `plan: "agency"`, `app_subscriptions/update` bails out on uninstall, and `shop/redact` lags up to 48h — so reinstalling inside that window restored **Agency features with no subscription and no charge approval** |
+| `6332d29` | **Removed the free trial from Pro and Agency.** Every paid capability is burst-shaped (one backup, one migration, one bulk CSV), so a trial was a giveaway. Removing it doesn't lose the one-off merchant, it charges them — Shopify never prorates on cancellation. Also fixed the button that would have rendered "Start 0-day free trial", and corrected `terms.tsx`, a **public legal page** still promising a 7-day trial |
+| `d8a2a7e` | `scripts/listing-screenshots.py` + `docs/LISTING_SCREENSHOT_PROMPTS.md` — deterministic screenshot pipeline, and why a generative image model must never be used on them |
 
 ---
 
@@ -170,7 +202,39 @@ owner — so it needs no domain. `SUPPORT_TO_EMAIL` is set on the web service an
 proven (§3). Keep it distinct from `APP_CONTACT_EMAIL`: the former is private
 routing, the latter is what merchants are shown.
 
+**⚠️ LIVE BUG — the stored offline access token is dead.** Verified 2026-08-15:
+the single row in `Session` for `rahul-developer-store` holds a well-formed
+`shpat_…` token that Shopify rejects with **401 on API versions 2026-04, 2025-10
+and 2025-01**. The row also carries an `expires` in the past, which an offline
+session should never have.
+
+The app itself works fine, because token exchange (`unstable_newEmbeddedAuthStrategy`)
+mints a token per request and never reads that row. Blast radius, checked rather
+than assumed:
+
+- **Background jobs are unaffected** — export/import/backup take `accessToken`
+  from the job payload, captured from a live request at enqueue time.
+- **Cross-store copy is broken** — [`app.cross-store.tsx:34`](app/routes/app.cross-store.tsx:34)
+  reads the stored offline session and uses its token to write to the *target*
+  store. With a stale token that 401s, and there is no refresh or repair path.
+  That is a paid Agency feature failing.
+
+Not yet diagnosed further. Start here if picking up a bug: does the offline
+session ever get refreshed, and should cross-store copy re-exchange instead of
+trusting the stored row?
+
 **Other open items**
+
+- **Buy the agency domain.** One purchase closes three things: a real
+  `APP_CONTACT_EMAIL` (today it is `metavaultsapp@gmail.com`, a Gmail on a domain
+  we don't own, shown on `/privacy`, `/terms` and the support page), the verified
+  Resend sending subdomain that merchant email notifications need, and the agency
+  site itself. Recommended stack: Cloudflare Pages (free, and the R2 bucket is
+  already in that account) + Cloudflare Email Routing for `support@` forwarding.
+  `fathomcommerce.com` was available and recommended at the time of writing.
+- **`INTERNAL_TOOLS_SHOPS` is unset**, so `/app/checklist` 404s for us too. Set it
+  to `rahul-developer-store.myshopify.com` on the web service to get it back.
+  Everything it reports is duplicated in §2 anyway.
 
 - **`/app/checklist` is internal tooling and is now gated** (commit `4628990`).
   It was in the merchant sidebar with no gate, so every merchant — and any App
@@ -301,10 +365,49 @@ so don't assume they changed.
 
 ### What's left
 
-- **Submit one request from the admin.** Everything else is proven (§3); the
-  route's own action end to end is not, because the app runs in a cross-origin
-  iframe and can't be driven from a tooling session.
 - Consider contextual "Report a problem" links from other pages — the route
   already accepts `?type=bug&area=Backups%20%26%20restore` to preselect the form.
 - The first submission ("Add specific metafield export") is stored with an
   `emailError`, from before `SUPPORT_TO_EMAIL` was applied. Nothing was lost.
+
+---
+
+## 9. Environment variables that are set in production
+
+On the **MetaVault** (web) service. The worker holds `${{MetaVault.*}}` references.
+
+| Var | Value / note |
+| --- | --- |
+| `SUPPORT_TO_EMAIL` | `thakorrahul285@gmail.com` — **private routing inbox.** Must be the Resend account owner's address or the sandbox sender 403s. Never render it in a loader or a page. |
+| `APP_CONTACT_EMAIL` | `metavaultsapp@gmail.com` — **public** contact, shown on `/privacy`, `/terms`, support page. Replace with `support@<domain>` once the domain is bought. |
+| `RESEND_API_KEY`, `RESEND_FROM` | `onboarding@resend.dev` — sandbox sender, delivers **only** to the Resend account owner. |
+| `INTERNAL_TOOLS_SHOPS` | **unset** → `/app/checklist` 404s for everyone. |
+
+Verify a variable from **inside the container** (service → Console →
+`printenv NAME`), never from the variables list — see §1 rule 5.
+
+---
+
+## 10. Screenshot pipeline
+
+`python3 scripts/listing-screenshots.py <folder-of-raw-captures>` turns raw,
+uncropped window captures named `NN-slug-raw.png` into exact 2560×1440 and
+1600×900 images. Crop + uniform scale + pad only — no model, so text stays the
+app's own pixels.
+
+Current set lives in `~/Downloads/new-screenshot/listing/1600x900/`. **Use the
+1600×900 set** — it is a pure downscale; the 2560 set upscales the centred pages
+~1.14×.
+
+Three things it encodes that are invisible in the output and expensive to
+rediscover: find the sidebar by per-column darkness density (the active nav
+item's indigo tint splits a naive "longest navy run" scan and silently slices
+138px off), splice out the ~590px dead gutter on Polaris-centred pages, and snap
+the crop height to a gap *between* nav items using a strict brightness threshold
+(a loose one counts antialiased glyph tails as empty navy and bisects the last
+label).
+
+**Never run listing screenshots through a generative image model.** A ChatGPT
+attempt rewrote "one-row-per-entry" as "app-row-per-entry" and changed the
+cross-store copy header to claim it copies metafields — the opposite of what the
+feature does. See `docs/LISTING_SCREENSHOT_PROMPTS.md`.
