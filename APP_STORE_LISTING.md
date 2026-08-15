@@ -165,3 +165,63 @@ page re-captured:
 - `Test badge` (Woven Rattan Cat Cave Bed → `custom.product_sell_badge`)
 - `First line of a multi-line value Second line proves the parser fix Third line`
   (Organic Cotton Bath Towel → `custom.product_key_features`)
+
+---
+
+## Partner Dashboard listing form — values entered
+
+Recorded here because the submission form does not save until *every* required
+field is complete, so a half-filled form is lost on navigation.
+
+| Field | Value |
+| --- | --- |
+| App name | `MetaVault` |
+| Primary category | Store design › Content › **Metafields** |
+| Metafield types | Collections, Products, Customers, Orders |
+| Management tools | Bulk import and export |
+| Languages | English |
+| App card subtitle | `Bulk edit metafields, manage metaobjects, back up custom data` [61/62] |
+| Merchant review email | metavaultsapp@gmail.com |
+| App submission email | metavaultsapp@gmail.com |
+| Test account | "My app doesn't require an account to use it" |
+| Sales channel requirements | "My app doesn't require the Shopify Online Store or Shopify POS" |
+
+**App details** had to be trimmed — the form caps it at 500 characters and the
+original draft was 699. The orphan-cleaner paragraph was cut first, as planned:
+
+```
+Shopify's admin makes you edit metafields one resource at a time. MetaVault gives you a real workspace for custom data.
+
+Browse and bulk edit metafields across products, collections, customers and orders. Manage metaobject definitions and entries in one place. Import and export as CSV to make sweeping changes in a spreadsheet, then push back.
+
+Agencies get more: full snapshots of every metafield and metaobject, preview-then-confirm restore, cross-store copying, and ready-made Liquid snippets.
+```
+[497 / 500]
+
+### Reviewer testing instructions
+
+```
+No account or credentials are needed — MetaVault authenticates through Shopify session tokens on install.
+
+To test this app:
+1. Install MetaVault on a development store that has at least one metafield definition in the "custom" namespace, with values on a few products.
+2. Open the app from Apps in the Shopify admin. You land on the Dashboard, which shows metafield/metaobject definition counts and recent activity.
+3. Click Metafields. Use the owner-type tabs (Products, Collections, Customers, Orders) and the "Add filter" control to filter by namespace. Edit a value inline and save — the change is written straight to Shopify via the GraphQL Admin API.
+4. Click Metaobjects to browse definitions and entries, and to add or edit an entry.
+5. Click Import / Export. Choose a resource type and click Export CSV; the file is generated as a background job and appears on the Jobs page when ready. "Download a sample CSV" shows the expected import format (owner_id, namespace, key, type, value). Imports upsert: a row whose namespace and key already exist on that owner is overwritten.
+6. Free plan limits editing to 50 metafields/day. CSV import/export requires Pro; Backups, Cross-store copy, Liquid snippets and Orphan cleaner require Agency. Plans can be started, changed and cancelled from Plans & Billing, which uses the Shopify Billing API (appSubscriptionCreate). Test charges are used on development stores, so nothing is billed.
+7. Help & Feedback is the in-app support form; submissions are stored and emailed to us.
+
+Backups and restore (Agency) create a full snapshot of every metafield and metaobject; restore shows a preview and requires confirmation before writing. Snapshots are stored privately and expire after 30 days.
+```
+
+### Still blocking Save
+
+- **Screenshots** — must be attached by hand. Browser automation cannot upload
+  them: the file input only accepts folders shared with the browser session, and
+  `~/Downloads` is not one. Files are in
+  `~/Downloads/new-screenshot/listing/1600x900/`.
+- **Public pricing plans** — the form shows *0 public plans*. These define what
+  merchants are actually charged and are published, so they were deliberately
+  left for the owner to create via **Manage**. They must match `app/lib/plans.ts`:
+  Free $0, Pro $15/month (7-day trial), Agency $29/month (7-day trial).
