@@ -31,10 +31,11 @@ export default function Terms() {
         <ul style={UL}>
           <li>The <b>Free</b> plan is available at no charge with limited usage.</li>
           <li><b>Pro</b> ($15/month) and <b>Agency</b> ($29/month) are recurring subscriptions
-            billed through Shopify, each starting with a 7-day free trial.</li>
+            billed through Shopify. They do not include a free trial &mdash; use the Free plan
+            to try the app before subscribing.</li>
           <li>Charges appear on your regular Shopify invoice. You may cancel at any time from
             the app&rsquo;s billing page; access to paid features ends when the subscription is
-            cancelled.</li>
+            cancelled. Cancelling does not refund the current billing period.</li>
           <li>Except where required by law, charges already billed are non-refundable.</li>
         </ul>
       </Section>

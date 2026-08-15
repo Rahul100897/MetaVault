@@ -209,7 +209,13 @@ function PlanCard({
           </Button>
         ) : (
           <Button fullWidth variant="primary" onClick={onUpgrade} loading={loading}>
-            {`Start ${BILLING_PLANS[plan.id === "pro" ? "pro" : "agency"].trialDays}-day free trial`}
+            {(() => {
+              // Read the trial length rather than hardcoding it, but never render
+              // "Start 0-day free trial" — with trials off, the label has to
+              // become a plain upgrade.
+              const days = BILLING_PLANS[plan.id === "pro" ? "pro" : "agency"].trialDays;
+              return days > 0 ? `Start ${days}-day free trial` : `Upgrade to ${plan.name}`;
+            })()}
           </Button>
         )}
       </div>

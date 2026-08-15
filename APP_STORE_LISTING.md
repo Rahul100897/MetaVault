@@ -81,8 +81,15 @@ Must match `app/lib/plans.ts` exactly — reviewers check this.
 | Plan | Price | Trial | Includes |
 | --- | --- | --- | --- |
 | **Free** | $0 | — | View & edit up to 50 metafields/day · Metaobjects viewer · Single delete |
-| **Pro** | $15/month | 7 days | Everything in Free · Unlimited edits · CSV import & export · Bulk delete |
-| **Agency** | $29/month | 7 days | Everything in Pro · Backups & restore · Cross-store copy · Liquid snippets |
+| **Pro** | $15/month | **none** | Everything in Free · Unlimited edits · CSV import & export · Bulk delete |
+| **Agency** | $29/month | **none** | Everything in Pro · Backups & restore · Cross-store copy · Liquid snippets |
+
+**No free trial, deliberately.** Every paid capability is burst-shaped — one
+backup, one migration, one bulk CSV, copy the Liquid snippet once — so a trial
+lets a merchant take the entire value and cancel before day 8 having paid
+nothing. Removing it does not lose that merchant: Shopify never prorates a
+recurring charge on cancellation, so a one-off user now pays the full month.
+The Free plan is the evaluation path.
 
 ---
 
@@ -224,4 +231,4 @@ Backups and restore (Agency) create a full snapshot of every metafield and metao
 - **Public pricing plans** — the form shows *0 public plans*. These define what
   merchants are actually charged and are published, so they were deliberately
   left for the owner to create via **Manage**. They must match `app/lib/plans.ts`:
-  Free $0, Pro $15/month (7-day trial), Agency $29/month (7-day trial).
+  Free $0, Pro $15/month, Agency $29/month — no free trial on either paid plan.

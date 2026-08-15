@@ -3,7 +3,10 @@
  *
  * Three plans (see PLAN_DETAILS in ./plans): Free is the implicit default and
  * never creates a charge; Pro and Agency are recurring appSubscriptions created
- * through `appSubscriptionCreate`, each with a 7-day trial.
+ * through `appSubscriptionCreate`, with no free trial (see the note on
+ * PLAN_CONFIG for why). The trial plumbing below is kept intact — trialDays is
+ * still sent and `trialEndsAt` still derived — so re-enabling a trial is a
+ * one-line change and existing trial subscriptions keep rendering correctly.
  *
  * The source of truth for "what plan is this shop on" is Shopify's
  * `currentAppInstallation.activeSubscriptions`. We mirror it into ShopSettings

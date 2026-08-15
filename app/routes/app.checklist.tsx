@@ -73,7 +73,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: "Billing configured",
       status: hasApiKey ? "done" : "todo",
       detail: hasApiKey
-        ? "appSubscriptionCreate is wired for Pro ($15) and Agency ($29) with 7-day trials; test charges outside production. See lib/billing.server.ts."
+        ? "appSubscriptionCreate is wired for Pro ($15) and Agency ($29) with no free trial; test charges outside production. See lib/billing.server.ts."
         : "SHOPIFY_API_KEY is not set — billing cannot be initialized in this environment.",
     },
     {

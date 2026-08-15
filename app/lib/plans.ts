@@ -24,8 +24,15 @@ export type BillingPlanConfig = {
  * trial length from it.
  */
 export const BILLING_PLANS: Record<PaidPlan, BillingPlanConfig> = {
-  pro: { id: "pro", name: "MetaVault Pro", amount: 15, currencyCode: "USD", trialDays: 7 },
-  agency: { id: "agency", name: "MetaVault Agency", amount: 29, currencyCode: "USD", trialDays: 7 },
+  // No free trial, deliberately. Every paid capability here is burst-shaped —
+  // one backup, one migration, one bulk CSV, copy the Liquid snippet once — so a
+  // trial is effectively a giveaway: a merchant can take the whole value and
+  // cancel before day 8 having paid nothing. Removing it doesn't lose that
+  // merchant, it charges them: Shopify does not prorate a recurring charge on
+  // cancellation, so a one-off user now pays the full month. Evaluation is
+  // covered by the Free plan, which is why no trial is needed here.
+  pro: { id: "pro", name: "MetaVault Pro", amount: 15, currencyCode: "USD", trialDays: 0 },
+  agency: { id: "agency", name: "MetaVault Agency", amount: 29, currencyCode: "USD", trialDays: 0 },
 };
 
 export function isPaidPlan(value: string): value is PaidPlan {
