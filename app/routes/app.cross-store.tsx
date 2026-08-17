@@ -5,7 +5,7 @@ import { Page, Text, BlockStack, InlineStack, Button, Badge, Select, Banner, Mod
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { adminGraphqlClient } from "../lib/admin-graphql.server";
+import { offlineAdminFor } from "../lib/offline-session.server";
 import { listDefinitions, listEntries, upsertEntry } from "../lib/metaobjects.server";
 import { chunk } from "../lib/metafields";
 import { getPlan } from "../lib/plan.server";
@@ -28,15 +28,6 @@ import UpgradeModal from "../components/UpgradeModal";
  * between stores. Metafield *values* are attached to owner resource GIDs that
  * don't exist in the target store, so they are intentionally out of scope.
  */
-
-async function targetAdminFor(shop: string) {
-  const session = await prisma.session.findFirst({
-    where: { shop, isOnline: false },
-    orderBy: { expires: "desc" },
-  });
-  if (!session?.accessToken) return null;
-  return adminGraphqlClient(shop, session.accessToken);
-}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -86,7 +77,7 @@ type ActionData =
       willUpdate: number;
       willCreate: number;
     }
-  | { ok: true; intent: "copy"; copied: number; failed: number }
+  | { ok: true; intent: "copy"; copied: number; failed: number; failureReason?: string }
   | { ok: true; intent: "generate-code"; code: string; expiresAt: string }
   | { ok: true; intent: "redeem-code"; partnerShop: string }
   | { ok: true; intent: "disconnect" }
@@ -140,14 +131,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
     };
   }
 
-  const targetAdmin = await targetAdminFor(targetShop);
-  if (!targetAdmin) {
-    return {
-      ok: false,
-      intent,
-      error: `No offline session for ${targetShop}. Install MetaVault on that store first.`,
-    };
+  // Resolves a *live* token for the target store, refreshing the stored offline
+  // one if it has expired. Reading the Session row directly meant copying with
+  // whatever token was last written there, which expires after 24 hours.
+  const target = await offlineAdminFor(targetShop);
+  if (!target.ok) {
+    return { ok: false, intent, error: target.error };
   }
+  const targetAdmin = target.admin;
 
   // Read all source entries for this definition.
   const sourceEntries: Array<{ handle: string; fields: Array<{ key: string; value: string }> }> = [];
@@ -192,6 +183,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
   if (intent === "copy") {
     let copied = 0;
     let failed = 0;
+    // Keep the first thing that went wrong. Without it a failed copy reported
+    // only a count, which is useless for telling a rejected field apart from a
+    // dead token.
+    let failureReason: string | undefined;
+    const noteFailure = (handle: string, why: string) => {
+      if (!failureReason) failureReason = `${handle}: ${why}`;
+    };
+
     for (const batch of chunk(sourceEntries, 25)) {
       const outcomes = await Promise.all(
         batch.map(async (e): Promise<boolean> => {
@@ -201,8 +200,17 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
               handle: e.handle,
               fields: e.fields,
             });
-            return res.userErrors.length === 0 && !!res.entry;
-          } catch {
+            if (res.userErrors.length) {
+              noteFailure(e.handle, res.userErrors.map((u) => u.message).join("; "));
+              return false;
+            }
+            if (!res.entry) {
+              noteFailure(e.handle, "Shopify returned no entry");
+              return false;
+            }
+            return true;
+          } catch (err) {
+            noteFailure(e.handle, err instanceof Error ? err.message : String(err));
             return false;
           }
         }),
@@ -222,7 +230,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
         },
       });
     }
-    return { ok: true, intent: "copy", copied, failed };
+    return { ok: true, intent: "copy", copied, failed, failureReason };
   }
 
   return { ok: false, intent, error: `Unknown action: ${intent}` };
@@ -293,7 +301,8 @@ export default function CrossStorePage() {
     if (d.ok && d.intent === "copy") {
       setConfirmOpen(false);
       if (d.failed) {
-        shopify.toast.show(`Copied ${d.copied}, ${d.failed} failed`, { isError: true });
+        const detail = d.failureReason ? ` — ${d.failureReason}` : "";
+        shopify.toast.show(`Copied ${d.copied}, ${d.failed} failed${detail}`, { isError: true });
       } else {
         shopify.toast.show(`Copied ${d.copied} entr${d.copied === 1 ? "y" : "ies"} to ${targetShop}`);
       }
