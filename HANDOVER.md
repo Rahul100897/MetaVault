@@ -1,16 +1,20 @@
 # MetaVault — session handover
 
-Written 2026-08-15. Covers the Railway deployment, App Store submission
-progress, the Help & feedback page, and what is left. Read this before touching
+Written 2026-08-15, substantially updated 2026-08-17. Covers the Railway
+deployment, App Store submission progress, the Help & feedback page, the
+storelivo.com email stack (§11), and what is left. Read this before touching
 anything.
 
-**Where things stand in one paragraph:** the app is live on Railway and healthy.
-The App Store listing is filled in and saved with **one blocker left — a
-screencast video**. The AI self review has been run (30 pass, 0 fail, 1 needs
-review) and marked done. Paid plans now have **no free trial**, deliberately.
-The next real engineering task is the **dead offline access token in §5**, which
-silently breaks cross-store copy. The next commercial task is **buying the
-agency domain**, which unblocks the public contact address and merchant email.
+**Where things stand in one paragraph:** the app is live on Railway and healthy,
+running `main` at `deed5d0` on Node 22. The **offline-token bug is fixed** and so
+is a hydration bug that would have broken the public legal pages the moment
+`APP_CONTACT_EMAIL` was set. The **agency domain `storelivo.com` is fully wired**
+— Cloudflare DNS + Email Routing for receiving, Resend verified for sending — so
+**merchant email notifications are live for the first time**. The App Store
+listing is filled in and saved with **one blocker left: a screencast video**. The
+AI self review is done (30 pass, 0 fail, 1 needs review). Paid plans have no free
+trial, deliberately. Nothing is blocked on engineering; what remains is a video,
+a Gmail SMTP setting, and end-to-end testing on the dev store (§12).
 
 ---
 
@@ -151,9 +155,46 @@ loss prevention and incident response.
   the route's own action end to end, which needs a submission from the admin —
   the app is in a cross-origin iframe, so it can't be driven from here.
 
+Added 2026-08-17:
+
+- **Node 22 in production** — `node -v` in the running web container reports
+  `v22.23.2`. The Dockerfile bump was also proven with a full local `docker build`
+  before pushing.
+- **The hydration fix is real in production, not just locally.** `/privacy` and
+  `/terms` both serve `mailto:support@storelivo.com`, the value appears in the
+  hydration payload as loader data, and **every JS asset was fetched and none
+  contains any contact address**. That last check is the actual proof: before the
+  fix the client bundle had `support@metavault.app` baked in at build time.
+- **Both new env vars verified from inside the container**, not from the
+  variables list — `printenv APP_CONTACT_EMAIL RESEND_FROM` returns
+  `support@storelivo.com` and `metavault@storelivo.com`.
+- **Resend domain `storelivo.com` Verified**; all 7 email DNS records confirmed
+  live at the authoritative nameserver (`dig @dane.ns.cloudflare.com`), not just
+  in the dashboard.
+- **The server-side metafields filter verified against the dev store** — 43 rows
+  unfiltered → 24 for `custom`, 18 for `judgeme`, 7 for search `towel`, 4 for
+  both; page two of a filtered walk leaked 0 rows from other namespaces.
+
+**NOT yet verified in production** (see §12): cross-store copy with the new token
+path, a merchant notification actually arriving at a merchant address, and the
+metafields filter through the real UI.
+
 ---
 
-## 4. Work done this session (all pushed to `main`)
+## 4. Work done (all pushed to `main`)
+
+### 2026-08-17
+
+| Commit | What |
+| --- | --- |
+| `0f212eb` | **Offline-token fix.** `targetAdminFor()` read the `Session` row raw, so cross-store copy 401'd ~24h after the *target* merchant last opened the app. Now goes through `unauthenticated.admin()` (refresh), re-checks expiry, and proves the token before writing. Also fixed the string-vs-array `errors` bug that made every auth failure read `body.errors.some is not a function` |
+| `84c900f` | **Metafields filter server-side.** Namespace + owner search now run in the Admin API, so they cover the catalog rather than the loaded page. Key/value/type cannot be — no top-level `metafields` query exists |
+| `f15b857` | **Contact address via loader.** `process.env` at module scope in a client-bundled file meant Vite baked the fallback in at build time; setting the var would have caused a hydration flip on `/privacy` and `/terms` |
+| `22b6c46` | Notifications opt-out card self-enables via `canNotifyMerchants()` instead of a manual code edit |
+| `375d292` | `node:22-alpine` (AWS SDK v3 drops Node 20 in Jan 2027) |
+| `deed5d0` | Doc corrections — §5's token diagnosis was wrong |
+
+### Earlier
 
 | Commit | What |
 | --- | --- |
@@ -181,28 +222,33 @@ loss prevention and incident response.
 
 ## 5. Known gaps and decisions
 
-**Email is built but effectively off.** The whole notify + template layer works.
-`RESEND_API_KEY` and `RESEND_FROM=onboarding@resend.dev` are set on both services.
-But that sandbox sender **only delivers to the Resend account owner's address**,
-so every merchant's own store email is rejected 403 — and notification failures
-are deliberately swallowed so they cannot fail the job, making it silent.
+**✅ Email is LIVE as of 2026-08-17.** Previously the sandbox sender
+`onboarding@resend.dev` only delivered to the Resend account owner, so every
+merchant address was rejected 403 — silently, because notification failures are
+deliberately swallowed so they cannot fail a job. That is over:
+`storelivo.com` is **Verified in Resend** and `RESEND_FROM=metavault@storelivo.com`
+is applied on the web service. Merchant job notifications now actually deliver.
 
-The Settings card was hidden in `e73e232`. **As of 2026-08-17 it is no longer a
-manual step** — `app.settings.tsx` renders it whenever `canNotifyMerchants()`
-(in `notify.server.ts`) is true, i.e. `RESEND_API_KEY` and `RESEND_FROM` are set
-*and* `RESEND_FROM` is not a `resend.dev` sandbox address. So the opt-out appears
-by itself the moment a verified domain is configured, and merchants never see a
-setting for mail that cannot reach them. Nothing to remember.
+The Settings opt-out card was hidden in `e73e232`. **It is no longer a manual
+step** — `app.settings.tsx` renders it whenever `canNotifyMerchants()` (in
+`notify.server.ts`) is true, i.e. `RESEND_API_KEY` and `RESEND_FROM` are set
+*and* `RESEND_FROM` is not a `resend.dev` address. It therefore appeared by
+itself when the variable was applied. Nothing to remember, nothing to re-enable.
 
-To finish email: buy a domain, verify a *subdomain* in Resend
-(`mail.youragency.com` — keeps app-mail reputation away from company mail), then
-set `RESEND_FROM=metavault@mail.youragency.com`. No code change.
+**Resend free tier limits to watch:** 1 domain, 3,000/month, **100/day** — shared
+between merchant notifications and support mail. Every completed
+export/import/backup is one email, so that ceiling is real once merchants arrive.
 
-**Support mail is the exception and already works.** The sandbox limitation is
-about the *recipient*, and a support request's recipient is the Resend account
-owner — so it needs no domain. `SUPPORT_TO_EMAIL` is set on the web service and
-proven (§3). Keep it distinct from `APP_CONTACT_EMAIL`: the former is private
-routing, the latter is what merchants are shown.
+**Reputation note:** the *root* domain is verified in Resend, not a `mail.`
+subdomain. A subdomain would isolate app-mail reputation from company mail, but
+the free tier allows only one domain and `support@storelivo.com` also needs to
+send. Revisit if you move to Resend Pro.
+
+**Support mail never needed the domain.** The sandbox limitation was about the
+*recipient*, and a support request's recipient is the Resend account owner.
+`SUPPORT_TO_EMAIL` stays distinct from `APP_CONTACT_EMAIL`: the former is private
+routing (a personal Gmail), the latter is what merchants are shown. Never render
+`SUPPORT_TO_EMAIL` in a loader or page.
 
 **✅ FIXED 2026-08-17 — the "dead offline access token".** Two corrections to
 what was written here on 2026-08-15, both worth reading before trusting older
@@ -249,22 +295,8 @@ from the job payload, captured from a live request at enqueue time.
 
 **Other open items**
 
-- **Agency domain bought 2026-08-17: `storelivo.com`** (Namecheap). Storelivo is
-  the **agency**; MetaVault stays the app name everywhere. No paid business email
-  is needed — the free path is Cloudflare Email Routing for receiving `support@`
-  and Resend for sending.
-
-  **No SPF conflict, checked:** Cloudflare Email Routing puts MX + SPF on the
-  **root**, Resend puts MX + SPF on a **`send`** subdomain and DKIM on
-  `resend._domainkey`. Different record names, so verifying the *root* domain in
-  Resend coexists with Email Routing — which matters because Resend's free tier
-  allows only **1 domain** (and 3,000/month, 100/day). Never point the root MX at
-  Resend; that breaks receiving.
-
-  Remaining: Cloudflare nameservers at Namecheap → Email Routing → Resend domain
-  verification → `APP_CONTACT_EMAIL` + `RESEND_FROM` on Railway → Gmail
-  "Send mail as" via `smtp.resend.com:465` (user `resend`, password = Resend API
-  key). Then the agency site on Cloudflare Pages.
+- **✅ Agency domain DONE 2026-08-17: `storelivo.com`.** See §11 for the full DNS
+  inventory and the traps found while wiring it.
 - **`INTERNAL_TOOLS_SHOPS` is unset**, so `/app/checklist` 404s for us too. Set it
   to `rahul-developer-store.myshopify.com` on the web service to get it back.
   Everything it reports is duplicated in §2 anyway.
@@ -282,11 +314,11 @@ from the job payload, captured from a live request at enqueue time.
 - `app/routes/app.additional.tsx` (Shopify template boilerplate, reachable and
   talking about "the app template") was deleted in `4628990`. `/app/additional`
   now returns 404 in production.
-- **`APP_CONTACT_EMAIL` is still unset in production.** The code fallback is now
-  `support@storelivo.com` (a domain we own), so the pages no longer advertise
-  someone else's domain — but set the variable explicitly anyway. Do **not** set it
-  to the personal Gmail in `SUPPORT_TO_EMAIL`; that address is deliberately never
-  rendered.
+- **✅ `APP_CONTACT_EMAIL` is set to `support@storelivo.com`** (2026-08-17), applied
+  and verified with `printenv` inside the running container. It was previously
+  `metavaultsapp@gmail.com` — **not** unset, as an earlier version of this doc
+  claimed. Do **not** set it to the personal Gmail in `SUPPORT_TO_EMAIL`; that
+  address is deliberately never rendered.
 
   **Fixed 2026-08-17 — it would not have worked before.** `CONTACT_EMAIL` was a
   module-scope `process.env` read inside `components/Legal.tsx`, which ships to the
@@ -428,13 +460,19 @@ On the **MetaVault** (web) service. The worker holds `${{MetaVault.*}}` referenc
 
 | Var | Value / note |
 | --- | --- |
-| `SUPPORT_TO_EMAIL` | `thakorrahul285@gmail.com` — **private routing inbox.** Must be the Resend account owner's address or the sandbox sender 403s. Never render it in a loader or a page. |
-| `APP_CONTACT_EMAIL` | **unset** → falls back to `support@storelivo.com` in code. Set it explicitly on the web service. **Public** contact, shown on `/privacy`, `/terms`, support page. |
-| `RESEND_API_KEY`, `RESEND_FROM` | `onboarding@resend.dev` — sandbox sender, delivers **only** to the Resend account owner. |
+| `SUPPORT_TO_EMAIL` | `thakorrahul285@gmail.com` — **private routing inbox**, a personal Gmail. Never render it in a loader or a page. |
+| `APP_CONTACT_EMAIL` | ✅ `support@storelivo.com` — **public** contact, shown on `/privacy`, `/terms`, support page. |
+| `RESEND_FROM` | ✅ `metavault@storelivo.com` — verified domain, real delivery to merchants. |
+| `RESEND_API_KEY` | set (secret). |
 | `INTERNAL_TOOLS_SHOPS` | **unset** → `/app/checklist` 404s for everyone. |
 
-Verify a variable from **inside the container** (service → Console →
-`printenv NAME`), never from the variables list — see §1 rule 5.
+The web container runs **Node v22.23.2** (confirmed via `node -v` in the Railway
+Console), so the `node:22-alpine` bump is real in production.
+
+**How to verify a variable without leaking secrets:** service → Console →
+`printenv NAME1 NAME2` with explicit names. Never bare `printenv` and never the
+**Raw Editor** — both dump `SHOPIFY_API_SECRET`, `RESEND_API_KEY` and the R2 keys
+in plaintext into whatever transcript or screenshot you are in.
 
 ---
 
@@ -461,3 +499,145 @@ label).
 attempt rewrote "one-row-per-entry" as "app-row-per-entry" and changed the
 cross-store copy header to claim it copies metafields — the opposite of what the
 feature does. See `docs/LISTING_SCREENSHOT_PROMPTS.md`.
+
+---
+
+## 11. storelivo.com — domain and email infrastructure
+
+Set up 2026-08-17. Registrar **Namecheap**, DNS + receiving **Cloudflare** (free
+plan, account `8875f979d04ff6ce87fb591100e7ff68` — the same account as the R2
+bucket), sending **Resend** (free tier, region Tokyo `ap-northeast-1`).
+
+Nameservers: `dane.ns.cloudflare.com`, `eva.ns.cloudflare.com`. DNSSEC off.
+
+### The DNS records and why each one is where it is
+
+| Name | Type | Value | Owner |
+| --- | --- | --- | --- |
+| `storelivo.com` | MX 32/55/60 | `route1/2/3.mx.cloudflare.net` | Cloudflare — **receiving** |
+| `storelivo.com` | TXT | `v=spf1 include:_spf.mx.cloudflare.net ~all` | Cloudflare |
+| `cf2024-1._domainkey` | TXT | `v=DKIM1; …` | Cloudflare |
+| `send` | MX 10 | `feedback-smtp.ap-northeast-1.amazonses.com` | Resend — **sending** |
+| `send` | TXT | `v=spf1 include:amazonses.com ~all` | Resend |
+| `resend._domainkey` | TXT | `p=MIGfMA0G…` | Resend |
+| `_dmarc` | TXT | `v=DMARC1; p=none; rua=mailto:support@storelivo.com` | us |
+| `storelivo.com` | A (proxied) | `162.255.119.12` | Namecheap parking — replace with Pages |
+| `www` | CNAME (proxied) | `parkingpage.namecheap.com` | ditto |
+
+**The whole design rests on one fact:** Cloudflare owns the **root** MX/SPF and
+Resend owns the **`send`** subdomain MX/SPF. Two SPF records on the *same* name
+would break SPF entirely; on different names they coexist. So the root domain can
+be verified in Resend (needed, because the free tier allows one domain and
+`support@` must send too) without touching receiving.
+
+Email Routing: `support@storelivo.com` → forwards to `thakorrahul285@gmail.com`.
+The destination address auto-verified with no email click because it is the
+Cloudflare account's own address. DNS records show **Locked** (Cloudflare-managed).
+
+### Traps hit — do not repeat these
+
+1. **Namecheap pre-populates 5 `eforward*.registrar-servers.com` MX records plus
+   its own SPF**, and Cloudflare's zone scan imports them. Their priorities are
+   **10/15/20** against Cloudflare's **32/55/60** — lower wins, so inbound mail
+   would have gone to Namecheap's dead forwarders. Cloudflare refuses to configure
+   while they exist (*"Existing non-Cloudflare MX records conflict with Email
+   Routing"*) and will **not** remove them for you. Delete all 6, then click
+   **Add missing records**.
+2. **Resend also offers an "Enable Receiving" MX** — `inbound-smtp.<region>.amazonaws.com`
+   on the **root** at priority **9**. That would outrank Cloudflare's and hijack
+   all inbound mail. Leave Enable Receiving **off**; Cloudflare owns receiving.
+3. **Resend truncates long DNS values in the UI with a middle ellipsis (`[…]`)**,
+   including the 216-char DKIM key. Do not retype from the screen. Use the copy
+   button, or verify: the key must be 216 base64 chars decoding to 162 bytes,
+   starting `MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQ` and ending `IDAQAB`.
+4. **Paste only `send`, not `send.storelivo.com`** — Cloudflare appends the zone,
+   giving `send.storelivo.com.storelivo.com`. DKIM must be **DNS only** (grey
+   cloud), not proxied.
+5. **Once nameservers point at Cloudflare, Namecheap's Advanced DNS tab is inert.**
+   Its host records and email forwarding stop being authoritative — nothing there
+   needs cleaning up. Only the copies Cloudflare imported matter. Nameservers are
+   on Namecheap's **Domain** tab, not Advanced DNS, and need the green ✓ to save.
+
+### Still to do on the domain
+
+- **Gmail "Send mail as"** for `support@storelivo.com`: SMTP `smtp.resend.com`
+  port 465, username `resend`, password = the Resend API key. Without this you can
+  *receive* at `support@` but replies come from your personal Gmail.
+- **Agency site** on Cloudflare Pages, then repoint the root A / `www` CNAME off
+  the Namecheap parking page.
+- Partner Directory slug is `vidhan` and the business name was `IT`; the name is
+  editable under Partner settings → Business details, the **slug is not** — it
+  needs a Shopify support ticket and there is no redirect from the old URL.
+
+---
+
+## 12. What is pending, and what needs testing
+
+Current as of 2026-08-17, `main` at `deed5d0`.
+
+### Blocking App Store submission
+
+1. **Screencast video** — 3–8 min, onboarding + core flows, hosted anywhere public
+   (unlisted YouTube is fine). Shot list in `APP_STORE_LISTING.md`. This is the
+   only thing standing between the listing and Submit.
+2. **Re-run the automated checks** just before submitting — they expire after 30
+   days and were last run around 2026-08-14.
+3. **Update the listing's three email fields** to `support@storelivo.com`
+   (support, merchant review, app submission) and the Partner **business name** to
+   `Storelivo`. The listing currently shows Developer "IT".
+
+### Needs a decision, not engineering
+
+4. **Export/import CSV retention.** Backups expire at 30 days and the sweep in
+   `app/jobs/cleanup.server.ts` enforces it. Export/import CSVs have no `expiresAt`
+   and are **never deleted**. Needs a retention number, then `expiresAt` on
+   `ExportJob`/`ImportJob` + a migration + extending the sweep. Options considered:
+   14 days for everything (balanced), 7 days (tighter data minimisation), 30 days
+   (one promise across the app), or 7 up / 30 down (shortest life for the file the
+   merchant uploaded).
+
+### Small, non-blocking
+
+5. **Gmail "Send mail as"** for `support@storelivo.com` — SMTP `smtp.resend.com:465`,
+   user `resend`, password = the Resend API key. Receiving already works; this is
+   only so replies come *from* the right address.
+6. **Delete Railway project `charismatic-learning`** (`f0653d47-9071-41d3-9dd5-1195b151d967`),
+   an old standalone Redis. Permanent delete, needs the owner's click.
+7. `INTERNAL_TOOLS_SHOPS` unset → `/app/checklist` 404s for us too. Set it to
+   `rahul-developer-store.myshopify.com` to get it back. Everything it reports is
+   duplicated in §2, so leaving it dead is fine.
+8. **Agency site** on Cloudflare Pages; then repoint the root A and `www` CNAME off
+   Namecheap's parking page.
+9. **Partner Directory slug** `vidhan` → needs a Shopify support ticket (§11).
+
+### Known limitations, deliberately not fixed
+
+- **`metafields(first: 50)` per owner ignores its own `hasNextPage`**, so an owner
+  with >50 metafields silently loses the rest. A namespace filter makes this far
+  less likely but does not remove it. Fixing it needs nested cursor pagination.
+- **Key / value / type metafield filtering cannot be server-side.** There is no
+  top-level `metafields` query on `QueryRoot` — metafields are only reachable
+  through their owner. Type stays a refinement of loaded rows and is labelled as
+  such. The old single search box matched namespace/key/value/owner locally; it now
+  searches the owner in Shopify, so key/value substring search is gone.
+- **File/image metaobject fields** are raw GID text inputs. A native picker needs
+  `read_files`/`write_files` and a `stagedUploadsCreate` pipeline.
+- **Resend free tier: 100 emails/day**, shared between notifications and support.
+
+### Testing needed — none of this can be driven from a headless session
+
+The app renders in a **cross-origin iframe**, so browser tooling cannot see inside
+it (§7). Everything below needs a human in the Shopify admin.
+
+| # | Test | Why it matters | Expected |
+| --- | --- | --- | --- |
+| 1 | **Cross-store copy** on the dev store | The headline fix of 2026-08-17. Only ever verified via unit-level probes, never through the real UI | Copies succeed. If the target store hasn't been opened in >24h it should say *"MetaVault's access to … has expired. Open MetaVault on that store once"* — **not** a 401 or "0 copied, N failed" |
+| 2 | **Metafields filter** — pick namespace `custom`, then search a product name | Server-side filter is new; the UI contract changed | Row count drops to `custom` only, and the footer reads "· filtered in Shopify". Searching a **metafield key** now returns nothing — that is expected, not a bug |
+| 3 | **Type filter** with few rows loaded | It is deliberately client-side | Chip reads "Type (loaded rows)" and a line explains Shopify can't filter by type |
+| 4 | **Empty state** — filter to a namespace that matches nothing | Used to say "None of your products have metafields yet", which looked like a broken app | Should say **"No matches"** with a Clear filters button |
+| 5 | **Run an export** and watch for the email | First real test of merchant notifications since the domain was verified | A "Your MetaVault export is ready" email arrives **from `metavault@storelivo.com`**, not `onboarding@resend.dev` |
+| 6 | **Settings page** | The opt-out card is now gated on `canNotifyMerchants()` | The **Email notifications card is visible**. If it isn't, `RESEND_FROM` didn't apply |
+| 7 | **Email `support@storelivo.com`** from an outside account | Cloudflare Email Routing was "Syncing" when set up | Lands in `thakorrahul285@gmail.com` |
+| 8 | **Submit the in-app support form** | Never exercised end to end — §3 only proved the Resend POST | Row in `SupportRequest` with `emailedAt` set (not `emailError`), and the mail arrives |
+| 9 | **Orphan cleaner** on a junk namespace | `collectNamespaceMetafields` changed to filter in the query | Finds and deletes the same set as before, faster |
+| 10 | **`/privacy` and `/terms` in a browser** | Hydration fix | Shows `support@storelivo.com` and **stays** on it after load — no flicker back to a placeholder, no React hydration error in the console |
