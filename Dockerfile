@@ -2,7 +2,9 @@
 # Both Railway services build from this file (see railway.json /
 # railway.worker.json). The web service runs `docker-start` (prisma migrate
 # deploy + serve); the worker overrides the command to `npm run worker`.
-FROM node:20-alpine
+# Node 22: the AWS SDK v3 (used by r2.server.ts) drops Node 20 support in
+# January 2027 and already warns on every S3 call. 22 is the current LTS.
+FROM node:22-alpine
 RUN apk add --no-cache openssl
 
 EXPOSE 3000
