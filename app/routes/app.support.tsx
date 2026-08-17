@@ -19,6 +19,7 @@ import {
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import { publicContactEmail } from "../lib/contact.server";
 import { getPlan } from "../lib/plan.server";
 import {
   AREAS,
@@ -84,7 +85,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // legal pages. Deliberately NOT SUPPORT_TO_EMAIL: that is the private
     // inbox we route requests to and is very likely a personal address, which
     // must never be rendered into a merchant-facing page.
-    publicContactEmail: process.env.APP_CONTACT_EMAIL ?? "support@metavault.app",
+    publicContactEmail: publicContactEmail(),
   };
 };
 

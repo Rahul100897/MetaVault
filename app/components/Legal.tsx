@@ -51,5 +51,22 @@ export function Section({ heading, children }: { heading: string; children: Reac
   );
 }
 
-/** Contact address surfaced on both legal pages; override via APP_CONTACT_EMAIL. */
-export const CONTACT_EMAIL = process.env.APP_CONTACT_EMAIL ?? "support@metavault.app";
+/**
+ * The contact address is deliberately NOT resolved here. This module is part of
+ * the client bundle, so a module-scope `process.env` read gets inlined at build
+ * time and drifts from what the server renders. Each legal page loads it in its
+ * loader instead — see ../lib/contact.server.
+ */
+export function ContactLine({ lead, email }: { lead: string; email: string }) {
+  return (
+    <Section heading="Contact">
+      <p style={{ margin: "0 0 12px" }}>
+        {lead}{" "}
+        <a href={`mailto:${email}`} style={{ color: "#6366F1" }}>
+          {email}
+        </a>
+        .
+      </p>
+    </Section>
+  );
+}

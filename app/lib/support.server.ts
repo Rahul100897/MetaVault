@@ -34,6 +34,7 @@ import {
 } from "./support";
 import { APP_VERSION } from "./version";
 import type { Plan } from "./plans";
+import { publicContactEmail } from "./contact.server";
 
 /**
  * Where support mail is routed. PRIVATE — this is very likely a personal
@@ -44,11 +45,7 @@ import type { Plan } from "./plans";
  * or every send is rejected 403 and only lands in `emailError`.
  */
 function supportInbox(): string {
-  return (
-    process.env.SUPPORT_TO_EMAIL ??
-    process.env.APP_CONTACT_EMAIL ??
-    "support@metavault.app"
-  );
+  return process.env.SUPPORT_TO_EMAIL ?? publicContactEmail();
 }
 
 // ---------------------------------------------------------------------------

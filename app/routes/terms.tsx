@@ -1,15 +1,20 @@
 import type { MetaFunction } from "@remix-run/node";
-import { LegalPage, Section, CONTACT_EMAIL } from "../components/Legal";
+import { useLoaderData } from "@remix-run/react";
+import { LegalPage, Section, ContactLine } from "../components/Legal";
+import { publicContactEmail } from "../lib/contact.server";
 
 export const meta: MetaFunction = () => [
   { title: "MetaVault — Terms of Service" },
   { name: "robots", content: "index" },
 ];
 
+export const loader = () => ({ contactEmail: publicContactEmail() });
+
 const P: React.CSSProperties = { margin: "0 0 12px" };
 const UL: React.CSSProperties = { margin: "0 0 12px", paddingLeft: "20px" };
 
 export default function Terms() {
+  const { contactEmail } = useLoaderData<typeof loader>();
   return (
     <LegalPage title="Terms of Service" updated="July 27, 2026">
       <Section heading="Acceptance">
@@ -88,15 +93,7 @@ export default function Terms() {
         </p>
       </Section>
 
-      <Section heading="Contact">
-        <p style={P}>
-          Questions about these terms? Email{" "}
-          <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: "#6366F1" }}>
-            {CONTACT_EMAIL}
-          </a>
-          .
-        </p>
-      </Section>
+      <ContactLine lead="Questions about these terms? Email" email={contactEmail} />
     </LegalPage>
   );
 }
