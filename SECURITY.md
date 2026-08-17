@@ -1,7 +1,7 @@
 # MetaVault — Security Policy
 
-Owner: Rahul Thakor · Contact: metavaultsapp@gmail.com
-Last reviewed: 2026-08-14 · Review cadence: every 6 months
+Owner: Rahul Thakor (Storelivo) · Contact: support@storelivo.com
+Last reviewed: 2026-08-17 · Review cadence: every 6 months
 
 MetaVault is a Shopify app that manages merchant-defined metafields and
 metaobjects. It processes protected customer data only in so far as metafields

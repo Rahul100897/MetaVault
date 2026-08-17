@@ -187,10 +187,12 @@ But that sandbox sender **only delivers to the Resend account owner's address**,
 so every merchant's own store email is rejected 403 — and notification failures
 are deliberately swallowed so they cannot fail the job, making it silent.
 
-The Settings card was therefore hidden in `e73e232`. `NotificationsCard`, the
-loader and the action are all intact; re-rendering it is one line in
-`app/routes/app.settings.tsx`. **Restore that card before enabling real sending**,
-so merchants have a way to opt out.
+The Settings card was hidden in `e73e232`. **As of 2026-08-17 it is no longer a
+manual step** — `app.settings.tsx` renders it whenever `canNotifyMerchants()`
+(in `notify.server.ts`) is true, i.e. `RESEND_API_KEY` and `RESEND_FROM` are set
+*and* `RESEND_FROM` is not a `resend.dev` sandbox address. So the opt-out appears
+by itself the moment a verified domain is configured, and merchants never see a
+setting for mail that cannot reach them. Nothing to remember.
 
 To finish email: buy a domain, verify a *subdomain* in Resend
 (`mail.youragency.com` — keeps app-mail reputation away from company mail), then
@@ -202,36 +204,67 @@ owner — so it needs no domain. `SUPPORT_TO_EMAIL` is set on the web service an
 proven (§3). Keep it distinct from `APP_CONTACT_EMAIL`: the former is private
 routing, the latter is what merchants are shown.
 
-**⚠️ LIVE BUG — the stored offline access token is dead.** Verified 2026-08-15:
-the single row in `Session` for `rahul-developer-store` holds a well-formed
-`shpat_…` token that Shopify rejects with **401 on API versions 2026-04, 2025-10
-and 2025-01**. The row also carries an `expires` in the past, which an offline
-session should never have.
+**✅ FIXED 2026-08-17 — the "dead offline access token".** Two corrections to
+what was written here on 2026-08-15, both worth reading before trusting older
+notes:
 
-The app itself works fine, because token exchange (`unstable_newEmbeddedAuthStrategy`)
-mints a token per request and never reads that row. Blast radius, checked rather
-than assumed:
+1. **The token was not mysteriously dead — it is designed to expire.**
+   `shopify.server.ts` sets `future.expiringOfflineAccessTokens: true`, which
+   makes offline tokens live **24 hours**. An `expires` in the past is correct
+   behaviour for that flag, not the anomaly it was taken for.
+2. **The evidence was read from the local dev database, not production.** The row
+   is `shpua_…` (an expiring offline token), not `shpat_…`.
 
-- **Background jobs are unaffected** — export/import/backup take `accessToken`
-  from the job payload, captured from a live request at enqueue time.
-- **Cross-store copy is broken** — [`app.cross-store.tsx:34`](app/routes/app.cross-store.tsx:34)
-  reads the stored offline session and uses its token to write to the *target*
-  store. With a stale token that 401s, and there is no refresh or repair path.
-  That is a paid Agency feature failing.
+The real defect: `targetAdminFor()` in `app.cross-store.tsx` read the `Session`
+row directly and used `accessToken` with no expiry check and no refresh. So
+cross-store copy worked for ~24h after the *target* store's merchant last opened
+MetaVault, and 401'd the rest of the time. The Shopify library already has the
+repair path — `unauthenticated.admin(shop)` → `ensureValidOfflineSession` →
+refresh grant → writes the new token back — and nothing was calling it.
 
-Not yet diagnosed further. Start here if picking up a bug: does the offline
-session ever get refreshed, and should cross-store copy re-exchange instead of
-trusting the stored row?
+Now handled by [`app/lib/offline-session.server.ts`](app/lib/offline-session.server.ts):
+refresh, re-check expiry, then prove the token with one `{ shop { name } }`
+before writing to another store. Failures return a typed reason instead of a
+mid-copy 401.
+
+**Dead end, recorded so nobody repeats it:** the client credentials grant would
+be ideal here and *does* work against `rahul-developer-store` (verified — HTTP
+200, full scopes). But Shopify restricts it to apps installed in stores in your
+own organization; public App Store apps get `shop_not_permitted`. It would pass
+every dev-store test and fail for every real merchant. **Do not use it.**
+
+When the refresh token is also dead there is no server-side recovery for a public
+app — a token exchange needs a session token from that store's admin, so the
+merchant must open MetaVault there once. The UI now says exactly that.
+
+**Also fixed in the same pass:** on auth failures Shopify returns `errors` as a
+bare **string**, not an array. Both `graphql.server.ts` and a duplicated copy in
+`metafields.server.ts` called `body.errors.some(...)`, so every dead-token
+response anywhere in the app surfaced as `TypeError: body.errors.some is not a
+function`. That is why this class of failure was so hard to read. The duplicate
+is gone; `metafields.server.ts` now imports the shared helper.
+
+**Background jobs remain unaffected** — export/import/backup take `accessToken`
+from the job payload, captured from a live request at enqueue time.
 
 **Other open items**
 
-- **Buy the agency domain.** One purchase closes three things: a real
-  `APP_CONTACT_EMAIL` (today it is `metavaultsapp@gmail.com`, a Gmail on a domain
-  we don't own, shown on `/privacy`, `/terms` and the support page), the verified
-  Resend sending subdomain that merchant email notifications need, and the agency
-  site itself. Recommended stack: Cloudflare Pages (free, and the R2 bucket is
-  already in that account) + Cloudflare Email Routing for `support@` forwarding.
-  `fathomcommerce.com` was available and recommended at the time of writing.
+- **Agency domain bought 2026-08-17: `storelivo.com`** (Namecheap). Storelivo is
+  the **agency**; MetaVault stays the app name everywhere. No paid business email
+  is needed — the free path is Cloudflare Email Routing for receiving `support@`
+  and Resend for sending.
+
+  **No SPF conflict, checked:** Cloudflare Email Routing puts MX + SPF on the
+  **root**, Resend puts MX + SPF on a **`send`** subdomain and DKIM on
+  `resend._domainkey`. Different record names, so verifying the *root* domain in
+  Resend coexists with Email Routing — which matters because Resend's free tier
+  allows only **1 domain** (and 3,000/month, 100/day). Never point the root MX at
+  Resend; that breaks receiving.
+
+  Remaining: Cloudflare nameservers at Namecheap → Email Routing → Resend domain
+  verification → `APP_CONTACT_EMAIL` + `RESEND_FROM` on Railway → Gmail
+  "Send mail as" via `smtp.resend.com:465` (user `resend`, password = Resend API
+  key). Then the agency site on Cloudflare Pages.
 - **`INTERNAL_TOOLS_SHOPS` is unset**, so `/app/checklist` 404s for us too. Set it
   to `rahul-developer-store.myshopify.com` on the web service to get it back.
   Everything it reports is duplicated in §2 anyway.
@@ -249,11 +282,19 @@ trusting the stored row?
 - `app/routes/app.additional.tsx` (Shopify template boilerplate, reachable and
   talking about "the app template") was deleted in `4628990`. `/app/additional`
   now returns 404 in production.
-- **`APP_CONTACT_EMAIL` is unset in production**, so the support page, `/privacy`
-  and `/terms` all display the `support@metavault.app` placeholder — a domain
-  that isn't ours, on pages App Store reviewers read. Set it to a real address on
-  a domain you control before submitting. Do **not** set it to the personal Gmail
-  in `SUPPORT_TO_EMAIL`; that address is deliberately never rendered.
+- **`APP_CONTACT_EMAIL` is still unset in production.** The code fallback is now
+  `support@storelivo.com` (a domain we own), so the pages no longer advertise
+  someone else's domain — but set the variable explicitly anyway. Do **not** set it
+  to the personal Gmail in `SUPPORT_TO_EMAIL`; that address is deliberately never
+  rendered.
+
+  **Fixed 2026-08-17 — it would not have worked before.** `CONTACT_EMAIL` was a
+  module-scope `process.env` read inside `components/Legal.tsx`, which ships to the
+  browser, so Vite **inlined the fallback at build time** while the server read the
+  variable at runtime. Setting it would have rendered the new address server-side
+  and reverted to the placeholder on hydration — on public legal pages. It is now
+  resolved in a loader via `app/lib/contact.server.ts`, which is also the single
+  place the fallback lives (it was duplicated in three files).
 
 - **Listing screenshots** — minimum 1600×900. Capture with `Cmd+Shift+4` on a
   Retina display (2× pixels). Best screens: Backups (real snapshot with size and
@@ -267,9 +308,18 @@ trusting the stored row?
   delete, so it needs the owner's click.
 - **File/image metaobject fields** are GID text inputs; a native picker needs
   `read_files`/`write_files` and a `stagedUploadsCreate` pipeline.
-- **Metafields filter is client-side** over loaded rows only.
-- **AWS SDK v3 will require Node ≥ 22 from January 2027**; the Dockerfile pins
-  `node:20-alpine`.
+- **Metafields filter** — namespace and owner search are now applied by Shopify
+  (`metafields(namespace:)` and the owner connection's `query:`), so they filter
+  the whole catalog. **Key, value and type cannot be** — there is no top-level
+  `metafields` query on `QueryRoot`, so metafields are only reachable through
+  their owner. Type stayed a refinement of loaded rows and is labelled as one.
+  The old single search box matched namespace/key/value/owner locally; it now
+  searches the owner in Shopify, so key/value substring search is gone.
+- **`metafields(first: 50)` per owner ignores its own `hasNextPage`**, so an owner
+  with more than 50 metafields silently loses the rest. A namespace filter makes
+  this far less likely but does not remove it. Needs nested cursor pagination.
+- **AWS SDK v3 will require Node ≥ 22 from January 2027**; the Dockerfile now
+  pins `node:22-alpine` (bumped 2026-08-17, verified with a local `docker build`).
 
 ---
 
@@ -379,7 +429,7 @@ On the **MetaVault** (web) service. The worker holds `${{MetaVault.*}}` referenc
 | Var | Value / note |
 | --- | --- |
 | `SUPPORT_TO_EMAIL` | `thakorrahul285@gmail.com` — **private routing inbox.** Must be the Resend account owner's address or the sandbox sender 403s. Never render it in a loader or a page. |
-| `APP_CONTACT_EMAIL` | `metavaultsapp@gmail.com` — **public** contact, shown on `/privacy`, `/terms`, support page. Replace with `support@<domain>` once the domain is bought. |
+| `APP_CONTACT_EMAIL` | **unset** → falls back to `support@storelivo.com` in code. Set it explicitly on the web service. **Public** contact, shown on `/privacy`, `/terms`, support page. |
 | `RESEND_API_KEY`, `RESEND_FROM` | `onboarding@resend.dev` — sandbox sender, delivers **only** to the Resend account owner. |
 | `INTERNAL_TOOLS_SHOPS` | **unset** → `/app/checklist` 404s for everyone. |
 
