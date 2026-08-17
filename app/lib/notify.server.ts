@@ -103,6 +103,26 @@ export function buildEmail(
  * payload was only logged. Callers that record delivery must not treat that as
  * a send, or the record claims a message went out when it never did.
  */
+/**
+ * Whether mail to a *merchant's own address* can actually be delivered.
+ *
+ * Not the same as "Resend is configured". The sandbox sender
+ * `onboarding@resend.dev` delivers only to the Resend account owner, so every
+ * merchant address is rejected 403 — and because notification failures are
+ * deliberately swallowed so they can't fail a job, that failure is silent.
+ *
+ * The Settings notifications card is gated on this rather than on a
+ * commented-out line, so it appears by itself the moment RESEND_FROM points at
+ * a verified domain. Merchants therefore never see an opt-out for mail that
+ * cannot reach them, and nobody has to remember to re-enable the card.
+ */
+export function canNotifyMerchants(): boolean {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM;
+  if (!apiKey || !from) return false;
+  return !from.toLowerCase().includes("resend.dev");
+}
+
 export async function sendEmail(payload: EmailPayload): Promise<{ sent: boolean }> {
   const apiKey = process.env.RESEND_API_KEY;
   // e.g. "MetaVault <notifications@yourdomain.com>" — must be a verified domain.

@@ -20,6 +20,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getPlan } from "../lib/plan.server";
+import { canNotifyMerchants } from "../lib/notify.server";
 import { canCleanOrphans, PLAN_DETAILS, type Plan } from "../lib/plans";
 import {
   scanNamespaces,
@@ -37,6 +38,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     plan,
     canInspect: canCleanOrphans(plan),
+    // Drives whether the notifications card renders at all — see canNotifyMerchants.
+    mailEnabled: canNotifyMerchants(),
     notifications: {
       enabled: settings?.emailNotifications ?? true,
       email: settings?.notifyEmail ?? "",
@@ -539,17 +542,19 @@ function NamespaceInspector({ canInspect }: { canInspect: boolean }) {
 }
 
 export default function SettingsPage() {
-  const { plan, canInspect } = useLoaderData<typeof loader>();
+  const { plan, canInspect, mailEnabled, notifications } = useLoaderData<typeof loader>();
 
   return (
     <Page title="Settings">
       <BlockStack gap="400">
         <SubscriptionCard plan={plan} />
-        {/* Email notifications are hidden until a verified sending domain is in
-            place. Resend's sandbox sender only delivers to the account owner, so
-            the setting promised merchants something that could not work for
-            them. The loader, action and NotificationsCard are intact — restore
-            the line below once RESEND_FROM points at a verified domain. */}
+        {/* Shown only when merchant mail can actually be delivered. With the
+            Resend sandbox sender every merchant address is rejected silently, so
+            an opt-out would be a promise the app can't keep. This is a runtime
+            check rather than a commented-out line, so the card appears on its own
+            once RESEND_FROM points at a verified domain — no code change, and no
+            chance of forgetting to bring it back. */}
+        {mailEnabled && <NotificationsCard initial={notifications} />}
         <NamespaceInspector canInspect={canInspect} />
       </BlockStack>
     </Page>
