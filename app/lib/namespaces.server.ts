@@ -132,11 +132,11 @@ export async function collectNamespaceMetafields(
     try {
       let after: string | null = null;
       do {
-        const page = await listMetafields(admin, { ownerType, first: 50, after });
+        // Filter in the query, not in the loop: this used to pull every
+        // metafield on every owner and discard the ones in other namespaces.
+        const page = await listMetafields(admin, { ownerType, first: 50, after, namespace });
         for (const row of page.rows) {
-          if (row.namespace === namespace) {
-            out.push({ ownerType, ownerId: row.ownerId, namespace: row.namespace, key: row.key });
-          }
+          out.push({ ownerType, ownerId: row.ownerId, namespace: row.namespace, key: row.key });
         }
         after = page.hasNextPage ? page.endCursor : null;
       } while (after);

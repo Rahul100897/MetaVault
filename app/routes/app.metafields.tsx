@@ -21,7 +21,12 @@ import { isPro, isAgency, canBulkDelete, FREE_DAILY_LIMIT } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
 import SnippetModal from "../components/SnippetModal";
 import type { SnippetTarget } from "../lib/liquid";
-import { listMetafields, setMetafields, deleteMetafields } from "../lib/metafields.server";
+import {
+  listMetafields,
+  listMetafieldDefinitions,
+  setMetafields,
+  deleteMetafields,
+} from "../lib/metafields.server";
 import {
   chunk,
   OWNER_CONFIG,
@@ -37,14 +42,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const ownerParam = url.searchParams.get("owner") ?? "PRODUCT";
   const ownerType: OwnerType = isOwnerType(ownerParam) ? ownerParam : "PRODUCT";
   const after = url.searchParams.get("after");
+  // Namespace and owner search are applied by Shopify (see listMetafields), so
+  // they filter the whole catalog rather than the rows already on screen.
+  const namespace = url.searchParams.get("namespace") || null;
+  const search = url.searchParams.get("q") || null;
 
-  const [page, plan] = await Promise.all([
-    listMetafields(admin, { ownerType, first: 25, after }),
+  const [page, plan, definitions] = await Promise.all([
+    listMetafields(admin, { ownerType, first: 25, after, namespace, search }),
     getPlan(session.shop),
+    // Cheap, complete source of namespaces that have a definition. Namespaces
+    // left behind by removed apps have none, so the UI unions this with what it
+    // has actually loaded.
+    listMetafieldDefinitions(admin, ownerType).catch(() => []),
   ]);
   const dailyUsed = isPro(plan) ? 0 : await getDailyEditCount(session.shop);
 
-  return { ownerType, page, plan, dailyUsed };
+  const definedNamespaces = Array.from(new Set(definitions.map((d) => d.namespace))).sort();
+
+  return { ownerType, page, plan, dailyUsed, namespace, search, definedNamespaces };
 };
 
 type DeleteItem = { id: string; ownerId: string; namespace: string; key: string };
@@ -252,7 +267,21 @@ function TableSkeleton() {
   );
 }
 
-function EmptyMetafields({ ownerLabel }: { ownerLabel: string }) {
+/**
+ * `filtered` matters: once namespace/search are applied by Shopify, an empty
+ * page usually means "nothing matched", not "this store has no metafields".
+ * Telling a merchant with a filter on that they have no metafields at all is
+ * how a working filter looks like a broken app.
+ */
+function EmptyMetafields({
+  ownerLabel,
+  filtered = false,
+  onClearFilters,
+}: {
+  ownerLabel: string;
+  filtered?: boolean;
+  onClearFilters?: () => void;
+}) {
   return (
     <div
       style={{
@@ -274,13 +303,18 @@ function EmptyMetafields({ ownerLabel }: { ownerLabel: string }) {
       </svg>
       <BlockStack gap="100" inlineAlign="center">
         <Text as="p" variant="headingMd" alignment="center">
-          No metafields found
+          {filtered ? "No matches" : "No metafields found"}
         </Text>
         <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-          None of your {ownerLabel.toLowerCase()} have metafields yet. Add one in
-          Shopify admin, or switch to a different resource type above.
+          {filtered
+            ? `No ${ownerLabel.toLowerCase()} match the current namespace or search.`
+            : `None of your ${ownerLabel.toLowerCase()} have metafields yet. Add one in
+               Shopify admin, or switch to a different resource type above.`}
         </Text>
       </BlockStack>
+      {filtered && onClearFilters && (
+        <Button onClick={onClearFilters}>Clear filters</Button>
+      )}
     </div>
   );
 }
@@ -290,7 +324,15 @@ function EmptyMetafields({ ownerLabel }: { ownerLabel: string }) {
 // ---------------------------------------------------------------------------
 
 export default function MetafieldsPage() {
-  const { ownerType, page, plan, dailyUsed } = useLoaderData<typeof loader>();
+  const {
+    ownerType,
+    page,
+    plan,
+    dailyUsed,
+    namespace: activeNamespace,
+    search: activeSearch,
+    definedNamespaces,
+  } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
   const pro = isPro(plan);
@@ -334,8 +376,11 @@ export default function MetafieldsPage() {
   const [rows, setRows] = useState<MetafieldRow[]>(page.rows);
   const [cursor, setCursor] = useState<string | null>(page.endCursor);
   const [hasNext, setHasNext] = useState<boolean>(page.hasNextPage);
-  const [search, setSearch] = useState("");
-  const [namespaceFilter, setNamespaceFilter] = useState<string[]>([]);
+  // `search` is the text in the box; `activeSearch` is what the server actually
+  // filtered on. They differ while the merchant is still typing.
+  const [search, setSearch] = useState(activeSearch ?? "");
+  // Type has no Admin API equivalent, so it stays a refinement of loaded rows
+  // and is labelled as such in the UI.
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
 
   // Inline editing
@@ -497,23 +542,67 @@ export default function MetafieldsPage() {
 
   const isLoadingMore = loadMore.state !== "idle";
 
+  /**
+   * Server-filter state lives in the URL, so the loader is the single source of
+   * truth: paging, revalidation and the back button all stay consistent with
+   * what is on screen.
+   */
+  const buildUrl = (
+    overrides: { owner?: OwnerType; namespace?: string | null; q?: string | null; after?: string } = {},
+  ) => {
+    const params = new URLSearchParams();
+    params.set("owner", overrides.owner ?? ownerType);
+    const ns = overrides.namespace !== undefined ? overrides.namespace : activeNamespace;
+    const q = overrides.q !== undefined ? overrides.q : activeSearch;
+    if (ns) params.set("namespace", ns);
+    if (q) params.set("q", q);
+    if (overrides.after) params.set("after", overrides.after);
+    return `/app/metafields?${params.toString()}`;
+  };
+
   const handleOwnerChange = (next: OwnerType) => {
     if (next === ownerType) return;
+    // Namespace and search are owner-scoped, so switching owner clears them
+    // rather than carrying over a filter that may match nothing here.
     navigate(`/app/metafields?owner=${next}`);
   };
 
   const handleLoadMore = () => {
     if (!cursor) return;
-    loadMore.load(`/app/metafields?owner=${ownerType}&after=${encodeURIComponent(cursor)}`);
+    loadMore.load(buildUrl({ after: cursor }));
   };
 
-  // Facet options are derived from the loaded rows.
+  const setNamespace = (next: string | null) => {
+    if ((next ?? null) === (activeNamespace ?? null)) return;
+    navigate(buildUrl({ namespace: next }));
+  };
+
+  // Debounce the search box: each change re-runs the loader, so firing on every
+  // keystroke would be a request per character.
+  useEffect(() => {
+    const typed = search.trim();
+    if (typed === (activeSearch ?? "")) return;
+    const t = setTimeout(() => navigate(buildUrl({ q: typed || null })), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, activeSearch]);
+
+  // Keep the box in step when the URL changes from elsewhere (clear-all, back).
+  useEffect(() => {
+    setSearch(activeSearch ?? "");
+  }, [activeSearch]);
+
+  /**
+   * Namespaces with a definition, unioned with any seen in loaded rows —
+   * namespaces left behind by a removed app have no definition, so definitions
+   * alone would hide exactly the ones the orphan cleaner exists for.
+   */
   const namespaceOptions = useMemo(
     () =>
-      Array.from(new Set(rows.map((r) => r.namespace)))
+      Array.from(new Set([...definedNamespaces, ...rows.map((r) => r.namespace)]))
         .sort()
         .map((n) => ({ label: n, value: n })),
-    [rows],
+    [definedNamespaces, rows],
   );
   const typeOptions = useMemo(
     () =>
@@ -523,36 +612,22 @@ export default function MetafieldsPage() {
     [rows],
   );
 
-  const hasActiveFilter =
-    search.trim() !== "" || namespaceFilter.length > 0 || typeFilter.length > 0;
+  const serverFiltered = Boolean(activeNamespace) || Boolean(activeSearch);
 
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (namespaceFilter.length && !namespaceFilter.includes(r.namespace)) return false;
-      if (typeFilter.length && !typeFilter.includes(r.type)) return false;
-      if (
-        q &&
-        !(
-          r.namespace.toLowerCase().includes(q) ||
-          r.key.toLowerCase().includes(q) ||
-          r.ownerLabel.toLowerCase().includes(q) ||
-          r.value.toLowerCase().includes(q)
-        )
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [rows, search, namespaceFilter, typeFilter]);
+  // Only the type facet narrows here now — namespace and search were already
+  // applied by Shopify, so re-checking them locally would be dead code.
+  const filteredRows = useMemo(
+    () => (typeFilter.length ? rows.filter((r) => typeFilter.includes(r.type)) : rows),
+    [rows, typeFilter],
+  );
 
   const appliedFilters = [
-    ...(namespaceFilter.length
+    ...(activeNamespace
       ? [
           {
             key: "namespace",
-            label: `Namespace: ${namespaceFilter.join(", ")}`,
-            onRemove: () => setNamespaceFilter([]),
+            label: `Namespace: ${activeNamespace}`,
+            onRemove: () => setNamespace(null),
           },
         ]
       : []),
@@ -560,7 +635,7 @@ export default function MetafieldsPage() {
       ? [
           {
             key: "type",
-            label: `Type: ${typeFilter.join(", ")}`,
+            label: `Type (loaded rows): ${typeFilter.join(", ")}`,
             onRemove: () => setTypeFilter([]),
           },
         ]
@@ -682,17 +757,19 @@ export default function MetafieldsPage() {
           })}
         </div>
 
-        {/* Filter bar (Shopify-native style, over loaded rows) */}
+        {/* Filter bar. Namespace + search run on Shopify's side and so cover the
+            whole catalog; Type has no Admin API equivalent and is labelled as a
+            refinement of what is loaded. */}
         <div style={{ background: "#FFFFFF", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", overflow: "hidden" }}>
           <Filters
             queryValue={search}
-            queryPlaceholder="Search namespace, key, owner or value…"
+            queryPlaceholder={`Search ${OWNER_CONFIG[ownerType].label.toLowerCase()} by name…`}
             onQueryChange={setSearch}
             onQueryClear={() => setSearch("")}
             onClearAll={() => {
               setSearch("");
-              setNamespaceFilter([]);
               setTypeFilter([]);
+              navigate(buildUrl({ namespace: null, q: null }));
             }}
             appliedFilters={appliedFilters}
             filters={[
@@ -704,10 +781,9 @@ export default function MetafieldsPage() {
                   <ChoiceList
                     title="Namespace"
                     titleHidden
-                    allowMultiple
                     choices={namespaceOptions}
-                    selected={namespaceFilter}
-                    onChange={setNamespaceFilter}
+                    selected={activeNamespace ? [activeNamespace] : []}
+                    onChange={(next) => setNamespace(next[0] ?? null)}
                   />
                 ),
               },
@@ -729,6 +805,13 @@ export default function MetafieldsPage() {
             ]}
           />
         </div>
+
+        {typeFilter.length > 0 && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            Type filters only the {rows.length} row{rows.length === 1 ? "" : "s"} loaded so
+            far — Shopify can&apos;t filter metafields by type, so load more to widen it.
+          </Text>
+        )}
 
         {/* Bulk action bar */}
         {someSelected && (
@@ -821,7 +904,15 @@ export default function MetafieldsPage() {
           </div>
 
           {rows.length === 0 ? (
-            <EmptyMetafields ownerLabel={OWNER_CONFIG[ownerType].label} />
+            <EmptyMetafields
+              ownerLabel={OWNER_CONFIG[ownerType].label}
+              filtered={serverFiltered}
+              onClearFilters={() => {
+                setSearch("");
+                setTypeFilter([]);
+                navigate(buildUrl({ namespace: null, q: null }));
+              }}
+            />
           ) : (
             <div>
               {filteredRows.map((row, idx) => (
@@ -997,9 +1088,10 @@ export default function MetafieldsPage() {
                 }}
               >
                 <Text as="span" variant="bodySm" tone="subdued">
-                  {hasActiveFilter
-                    ? `${filteredRows.length} of ${rows.length} rows`
+                  {typeFilter.length
+                    ? `${filteredRows.length} of ${rows.length} rows loaded`
                     : `${rows.length} row${rows.length === 1 ? "" : "s"} loaded`}
+                  {serverFiltered ? " · filtered in Shopify" : ""}
                 </Text>
                 {hasNext ? (
                   <Button onClick={handleLoadMore} loading={isLoadingMore} variant="secondary">

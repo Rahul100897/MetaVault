@@ -19,6 +19,15 @@ import {
   type MetafieldIdentifier,
   type DeleteResult,
 } from "./metafields";
+// Backoff + response parsing live in ./graphql.server so there is one place
+// that knows Shopify's error shapes. Shopify mutations are rate limited, so
+// every mutation goes through `withBackoff`, which retries THROTTLED and
+// nothing else. `parseGraphql` is a local alias — the call sites below read
+// better with the shorter name.
+import {
+  withBackoff,
+  parseGraphqlResponse as parseGraphql,
+} from "./graphql.server";
 
 // Minimal shape of the Shopify admin GraphQL client from authenticate.admin()
 export type AdminClient = {
@@ -27,52 +36,6 @@ export type AdminClient = {
     options?: { variables?: Record<string, unknown> },
   ) => Promise<Response>;
 };
-
-/**
- * Wrap a GraphQL call with exponential backoff on THROTTLED errors and
- * transient network failures. Shopify mutations are rate limited, so every
- * mutation goes through this.
- */
-async function withBackoff<T>(
-  fn: () => Promise<T>,
-  { maxRetries = 5, baseDelayMs = 500 }: { maxRetries?: number; baseDelayMs?: number } = {},
-): Promise<T> {
-  let attempt = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    try {
-      return await fn();
-    } catch (err) {
-      const throttled = isThrottled(err);
-      if (!throttled || attempt >= maxRetries) throw err;
-      const delay = baseDelayMs * 2 ** attempt + Math.random() * 200;
-      await new Promise((r) => setTimeout(r, delay));
-      attempt++;
-    }
-  }
-}
-
-function isThrottled(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const message = "message" in err ? String((err as { message: unknown }).message) : "";
-  return /throttl/i.test(message);
-}
-
-/** Throw if the GraphQL response carries top-level errors (incl. THROTTLED). */
-async function parseGraphql<T>(res: Response): Promise<T> {
-  const body = (await res.json()) as {
-    data?: T;
-    errors?: Array<{ message: string; extensions?: { code?: string } }>;
-  };
-  if (body.errors?.length) {
-    const throttled = body.errors.some((e) => e.extensions?.code === "THROTTLED");
-    const message = body.errors.map((e) => e.message).join("; ");
-    const error = new Error(throttled ? `THROTTLED: ${message}` : message);
-    throw error;
-  }
-  if (!body.data) throw new Error("Empty GraphQL response");
-  return body.data;
-}
 
 /**
  * List metafields for an owner type, one row per metafield. Pagination cursors
@@ -84,17 +47,44 @@ export async function listMetafields(
     ownerType,
     first = 25,
     after = null,
-  }: { ownerType: OwnerType; first?: number; after?: string | null },
+    namespace = null,
+    search = null,
+  }: {
+    ownerType: OwnerType;
+    first?: number;
+    after?: string | null;
+    /**
+     * Restrict to one namespace, applied by Shopify rather than by us. This is
+     * the difference between "filter the rows we happened to load" and "filter
+     * the catalog" — without it, a namespace filter over a paged list silently
+     * misses everything past the current page.
+     *
+     * One namespace only: `metafields(namespace:)` takes a single string.
+     */
+    namespace?: string | null;
+    /**
+     * Owner search, passed to the owner connection's `query` argument. A bare
+     * term does a case-insensitive full-text match on the owner (product title,
+     * customer name/email, order name), so no search syntax is imposed on the
+     * merchant.
+     *
+     * Note this matches the **owner**, not metafield keys or values — Shopify
+     * offers no cross-owner metafield search, so those stay client-side.
+     */
+    search?: string | null;
+  },
 ): Promise<MetafieldPage> {
   const cfg = OWNER_CONFIG[ownerType];
+  // Null for either variable means "no filter" — verified against the API, not
+  // assumed, because a mishandled null would silently return an empty page.
   const query = `#graphql
-    query ListMetafields($first: Int!, $after: String) {
-      ${cfg.field}(first: $first, after: $after) {
+    query ListMetafields($first: Int!, $after: String, $namespace: String, $query: String) {
+      ${cfg.field}(first: $first, after: $after, query: $query) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id
           ${cfg.labelField}
-          metafields(first: 50) {
+          metafields(first: 50, namespace: $namespace) {
             nodes { id namespace key value type }
           }
         }
@@ -102,7 +92,14 @@ export async function listMetafields(
     }`;
 
   const data = await withBackoff(async () => {
-    const res = await admin.graphql(query, { variables: { first, after } });
+    const res = await admin.graphql(query, {
+      variables: {
+        first,
+        after,
+        namespace: namespace || null,
+        query: search?.trim() || null,
+      },
+    });
     return parseGraphql<{
       [field: string]: {
         pageInfo: { hasNextPage: boolean; endCursor: string | null };
