@@ -68,9 +68,8 @@ type DeleteItem = { id: string; ownerId: string; namespace: string; key: string 
 /**
  * A row targeted by bulk edit. `type` travels with each row rather than being
  * shared: a selection can span single_line_text_field, multi_line_text_field,
- * json and so on, and metafieldsSet validates the value against each field's
- * own type. Rows whose type rejects the value come back as userErrors instead
- * of failing the whole batch.
+ * json and so on, and the action batches one type at a time because
+ * metafieldsSet rejects an entire call if any single value is invalid.
  */
 type BulkSetItem = DeleteItem & { type: string };
 
@@ -155,26 +154,40 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
       return { ok: false, intent, error: "Bulk edit is a Pro feature." };
     }
 
+    // metafieldsSet is ATOMIC per call: one invalid value rejects the whole
+    // mutation, so a mixed-type batch loses the valid rows too. Verified against
+    // the API — setting plain text over {single_line_text_field, json} updated 0
+    // of 2, not 1 of 2. Grouping by type keeps a json failure from discarding
+    // the text rows, and confines any rejection to the type that caused it.
+    const byType = new Map<string, BulkSetItem[]>();
+    for (const item of items) {
+      const group = byType.get(item.type);
+      if (group) group.push(item);
+      else byType.set(item.type, [item]);
+    }
+
     const updatedIds: string[] = [];
     let partialError: string | null = null;
     try {
-      for (const batch of chunk(items, 25)) {
-        const result = await setMetafields(
-          admin,
-          batch.map(({ ownerId, namespace, key, type }) => ({
-            ownerId,
-            namespace,
-            key,
-            type,
-            value,
-          })),
-        );
-        if (result.userErrors.length && !partialError) {
-          partialError = result.userErrors[0].message;
+      for (const group of byType.values()) {
+        for (const batch of chunk(group, 25)) {
+          const result = await setMetafields(
+            admin,
+            batch.map(({ ownerId, namespace, key, type }) => ({
+              ownerId,
+              namespace,
+              key,
+              type,
+              value,
+            })),
+          );
+          if (result.userErrors.length && !partialError) {
+            partialError = result.userErrors[0].message;
+          }
+          // metafieldsSet echoes the metafield GID, which is exactly
+          // MetafieldRow.id, so the response maps straight back to rows.
+          for (const m of result.metafields) updatedIds.push(m.id);
         }
-        // metafieldsSet echoes the metafield GID, which is exactly MetafieldRow.id,
-        // so the response maps straight back to rows with no lookup.
-        for (const m of result.metafields) updatedIds.push(m.id);
       }
     } catch (err) {
       return { ok: false, intent, error: err instanceof Error ? err.message : "Bulk edit failed" };
@@ -1346,8 +1359,9 @@ export default function MetafieldsPage() {
               >
                 <Text as="p" variant="bodySm">
                   Your selection spans {selectedTypes.length} types (
-                  {selectedTypes.join(", ")}). Shopify validates the value against each
-                  field&apos;s own type, so rows it rejects are reported and left unchanged.
+                  {selectedTypes.join(", ")}). Each type is applied separately, so a value
+                  Shopify rejects for one type leaves those rows unchanged without affecting
+                  the others. A value valid for every type updates them all.
                 </Text>
               </div>
             )}
