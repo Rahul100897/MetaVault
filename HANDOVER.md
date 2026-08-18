@@ -635,6 +635,9 @@ it (§7). Everything below needs a human in the Shopify admin.
 | 2 | **Metafields filter** — pick namespace `custom`, then search a product name | Server-side filter is new; the UI contract changed | Row count drops to `custom` only, and the footer reads "· filtered in Shopify". Searching a **metafield key** now returns nothing — that is expected, not a bug |
 | 3 | **Type filter** with few rows loaded | It is deliberately client-side | Chip reads "Type (loaded rows)" and a line explains Shopify can't filter by type |
 | 4 | **Empty state** — filter to a namespace that matches nothing | Used to say "None of your products have metafields yet", which looked like a broken app | Should say **"No matches"** with a Clear filters button |
+| 4b | **Bulk edit** — select 2+ rows of the *same* type, click "Edit N values", set a value | New in `a3753ed`. The grid had checkboxes but only Delete before | All selected rows change; toast reads "Updated N metafields" |
+| 4c | **Bulk edit across mixed types** — select a `single_line_text_field` and a `json` row, set plain text | Per-row type validation | **Partial success**, not a hard failure: "Updated 1, some failed: …". The modal should warn about mixed types before you submit |
+| 4d | **Bulk edit on Free** (switch plan or use a Free shop) | Gated to Pro via `canBulkEdit` | Button reads "Bulk edit N (Pro)" and opens the upgrade modal |
 | 5 | **Run an export** and watch for the email | First real test of merchant notifications since the domain was verified | A "Your MetaVault export is ready" email arrives **from `metavault@storelivo.com`**, not `onboarding@resend.dev` |
 | 6 | **Settings page** | The opt-out card is now gated on `canNotifyMerchants()` | The **Email notifications card is visible**. If it isn't, `RESEND_FROM` didn't apply |
 | 7 | **Email `support@storelivo.com`** from an outside account | Cloudflare Email Routing was "Syncing" when set up | Lands in `thakorrahul285@gmail.com` |
