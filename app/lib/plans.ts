@@ -55,6 +55,14 @@ export function canBulkDelete(plan: Plan): boolean {
   return isPro(plan);
 }
 
+/**
+ * Setting one value across many selected metafields. Pro, matching bulk delete —
+ * the line Free draws is "one row at a time", not "which operation".
+ */
+export function canBulkEdit(plan: Plan): boolean {
+  return isPro(plan);
+}
+
 export function canBackup(plan: Plan): boolean {
   return isAgency(plan);
 }
@@ -98,6 +106,7 @@ export const PLAN_DETAILS: PlanDetail[] = [
     tagline: "For growing catalogs",
     features: [
       "Unlimited edits",
+      "Bulk edit selected rows",
       "CSV import & export",
       "Bulk delete",
       "Job history",

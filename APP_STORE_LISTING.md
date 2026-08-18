@@ -58,7 +58,7 @@ can tidy data other apps left behind.
 ## Feature list (max 5, 80 chars each)
 
 ```
-1. Bulk edit metafields across products, collections, customers and orders
+1. Bulk edit metafields — select rows and set values at once, or sweep changes via CSV
 2. Import and export metafields and metaobjects as CSV
 3. Full backups of your custom data, with preview-then-confirm restore
 4. Copy metafields and metaobjects between stores you manage

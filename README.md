@@ -19,6 +19,7 @@ API** only.
 | Metafields viewer & inline editor | ✅ (50 edits/day) | ✅ unlimited | ✅ |
 | Metaobjects viewer & editor | ✅ | ✅ | ✅ |
 | Single delete | ✅ | ✅ | ✅ |
+| Bulk edit (set one value on selected rows) | — | ✅ | ✅ |
 | CSV import & export | — | ✅ | ✅ |
 | Bulk delete | — | ✅ | ✅ |
 | Job history | — | ✅ | ✅ |
@@ -27,7 +28,9 @@ API** only.
 | Liquid & GraphQL snippets | — | — | ✅ |
 | Namespace inspector / orphan cleaner | — | — | ✅ |
 
-Every paid plan includes a 7-day free trial. Billing runs through Shopify's
+Paid plans have **no free trial** — every paid capability is burst-shaped (one
+backup, one migration, one bulk CSV), so a trial gives the whole value away.
+Evaluation is covered by the Free plan. Billing runs through Shopify's
 `appSubscriptionCreate`; charges are test charges outside production.
 
 ---

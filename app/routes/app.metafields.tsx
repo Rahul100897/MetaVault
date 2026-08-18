@@ -11,13 +11,14 @@ import {
   Modal,
   Filters,
   ChoiceList,
+  TextField,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { exportQueue } from "../lib/queue.server";
 import { getPlan, getDailyEditCount } from "../lib/plan.server";
-import { isPro, isAgency, canBulkDelete, FREE_DAILY_LIMIT } from "../lib/plans";
+import { isPro, isAgency, canBulkDelete, canBulkEdit, FREE_DAILY_LIMIT } from "../lib/plans";
 import UpgradeModal from "../components/UpgradeModal";
 import SnippetModal from "../components/SnippetModal";
 import type { SnippetTarget } from "../lib/liquid";
@@ -64,9 +65,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type DeleteItem = { id: string; ownerId: string; namespace: string; key: string };
 
+/**
+ * A row targeted by bulk edit. `type` travels with each row rather than being
+ * shared: a selection can span single_line_text_field, multi_line_text_field,
+ * json and so on, and metafieldsSet validates the value against each field's
+ * own type. Rows whose type rejects the value come back as userErrors instead
+ * of failing the whole batch.
+ */
+type BulkSetItem = DeleteItem & { type: string };
+
 type ActionData =
   | { ok: true; intent: "set"; id: string; value: string }
   | { ok: true; intent: "delete"; deletedIds: string[]; partialError: string | null }
+  | {
+      ok: true;
+      intent: "bulk-set";
+      /** Metafield GIDs that actually took the new value. */
+      updatedIds: string[];
+      value: string;
+      /** First userError when only some rows applied — e.g. a value invalid for that type. */
+      partialError: string | null;
+    }
   | { ok: true; intent: "export"; jobId: string }
   | { ok: false; intent: string; error: string };
 
@@ -116,6 +135,62 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionDat
     } catch (err) {
       return { ok: false, intent, error: err instanceof Error ? err.message : "Save failed" };
     }
+  }
+
+  if (intent === "bulk-set") {
+    const ownerType = String(formData.get("ownerType") ?? "");
+    const value = String(formData.get("value") ?? "");
+    let items: BulkSetItem[] = [];
+    try {
+      items = JSON.parse(String(formData.get("items") ?? "[]"));
+    } catch {
+      items = [];
+    }
+    if (!items.length) {
+      return { ok: false, intent, error: "Nothing to update" };
+    }
+    // Gated wholesale rather than by count: unlike delete, there is no
+    // single-row version of this action to leave open to Free.
+    if (!canBulkEdit(plan)) {
+      return { ok: false, intent, error: "Bulk edit is a Pro feature." };
+    }
+
+    const updatedIds: string[] = [];
+    let partialError: string | null = null;
+    try {
+      for (const batch of chunk(items, 25)) {
+        const result = await setMetafields(
+          admin,
+          batch.map(({ ownerId, namespace, key, type }) => ({
+            ownerId,
+            namespace,
+            key,
+            type,
+            value,
+          })),
+        );
+        if (result.userErrors.length && !partialError) {
+          partialError = result.userErrors[0].message;
+        }
+        // metafieldsSet echoes the metafield GID, which is exactly MetafieldRow.id,
+        // so the response maps straight back to rows with no lookup.
+        for (const m of result.metafields) updatedIds.push(m.id);
+      }
+    } catch (err) {
+      return { ok: false, intent, error: err instanceof Error ? err.message : "Bulk edit failed" };
+    }
+
+    if (updatedIds.length) {
+      await prisma.activityLog.create({
+        data: {
+          shopId: session.shop,
+          action: "edit",
+          resourceType: ownerType.toLowerCase() || "metafield",
+          rowCount: updatedIds.length,
+        },
+      });
+    }
+    return { ok: true, intent: "bulk-set", updatedIds, value, partialError };
   }
 
   if (intent === "delete") {
@@ -370,6 +445,7 @@ export default function MetafieldsPage() {
   const loadMore = useFetcher<typeof loader>();
   const editFetcher = useFetcher<typeof action>();
   const deleteFetcher = useFetcher<typeof action>();
+  const bulkEditFetcher = useFetcher<typeof action>();
   const exportFetcher = useFetcher<typeof action>();
 
   // Accumulated rows: reset whenever the owner type (i.e. the loader) changes.
@@ -450,6 +526,30 @@ export default function MetafieldsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deleteFetcher.state, deleteFetcher.data]);
 
+  // React to bulk-edit results.
+  useEffect(() => {
+    if (bulkEditFetcher.state !== "idle" || !bulkEditFetcher.data) return;
+    const data = bulkEditFetcher.data;
+    if (data.ok && data.intent === "bulk-set") {
+      const updated = new Set(data.updatedIds);
+      setRows((prev) => prev.map((r) => (updated.has(r.id) ? { ...r, value: data.value } : r)));
+      setSelected([]);
+      if (data.partialError) {
+        shopify.toast.show(
+          `Updated ${data.updatedIds.length}, some failed: ${data.partialError}`,
+          { isError: true },
+        );
+      } else {
+        shopify.toast.show(
+          `Updated ${data.updatedIds.length} metafield${data.updatedIds.length === 1 ? "" : "s"}`,
+        );
+      }
+    } else if (!data.ok) {
+      shopify.toast.show(data.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkEditFetcher.state, bulkEditFetcher.data]);
+
   // React to export-trigger results.
   useEffect(() => {
     if (exportFetcher.state !== "idle" || !exportFetcher.data) return;
@@ -476,6 +576,39 @@ export default function MetafieldsPage() {
       return;
     }
     setBulkConfirmOpen(true);
+  };
+
+  const openBulkEdit = () => {
+    if (!pro) {
+      setUpgrade({ open: true, reason: "Bulk edit is a Pro feature.", highlight: "pro" });
+      return;
+    }
+    // Seed with the common value when every selected row already agrees, so the
+    // merchant edits what they see rather than starting from an empty box.
+    const values = new Set(selectedRows.map((r) => r.value));
+    setBulkValue(values.size === 1 ? [...values][0] : "");
+    setBulkEditOpen(true);
+  };
+
+  const submitBulkEdit = () => {
+    bulkEditFetcher.submit(
+      {
+        intent: "bulk-set",
+        ownerType,
+        value: bulkValue,
+        items: JSON.stringify(
+          selectedRows.map((r) => ({
+            id: r.id,
+            ownerId: r.ownerId,
+            namespace: r.namespace,
+            key: r.key,
+            type: r.type,
+          })),
+        ),
+      },
+      { method: "post" },
+    );
+    setBulkEditOpen(false);
   };
 
   const submitDelete = (items: MetafieldRow[]) => {
@@ -648,6 +781,10 @@ export default function MetafieldsPage() {
     filteredRows.length > 0 && filteredRows.every((r) => selectedSet.has(r.id));
   const someSelected = selected.length > 0;
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkValue, setBulkValue] = useState("");
+  const isBulkEditing = bulkEditFetcher.state !== "idle";
+
 
   const toggleRow = (id: string) => {
     setSelected((prev) =>
@@ -667,6 +804,13 @@ export default function MetafieldsPage() {
   const selectedRows = useMemo(
     () => rows.filter((r) => selectedSet.has(r.id)),
     [rows, selectedSet],
+  );
+  // Selections can span types, and a value valid for one may be rejected by
+  // another (e.g. plain text into a json field). Warn rather than block —
+  // Shopify decides, and the rows it rejects come back as a partial error.
+  const selectedTypes = useMemo(
+    () => Array.from(new Set(selectedRows.map((r) => r.type))),
+    [selectedRows],
   );
 
   return (
@@ -853,11 +997,18 @@ export default function MetafieldsPage() {
                 Clear selection
               </button>
             </InlineStack>
-            <Button variant="primary" tone="critical" loading={isDeleting} onClick={openBulkDelete}>
-              {pro
-                ? `Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}`
-                : `Bulk delete ${selected.length} (Pro)`}
-            </Button>
+            <InlineStack gap="200">
+              <Button loading={isBulkEditing} onClick={openBulkEdit}>
+                {pro
+                  ? `Edit ${selected.length} value${selected.length === 1 ? "" : "s"}`
+                  : `Bulk edit ${selected.length} (Pro)`}
+              </Button>
+              <Button variant="primary" tone="critical" loading={isDeleting} onClick={openBulkDelete}>
+                {pro
+                  ? `Delete ${selected.length} metafield${selected.length === 1 ? "" : "s"}`
+                  : `Bulk delete ${selected.length} (Pro)`}
+              </Button>
+            </InlineStack>
           </div>
         )}
 
@@ -1149,6 +1300,57 @@ export default function MetafieldsPage() {
                 from this resource in Shopify.
               </Text>
             </div>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Bulk edit — set one value across every selected row */}
+      <Modal
+        open={bulkEditOpen}
+        onClose={() => setBulkEditOpen(false)}
+        title={`Edit ${selected.length} metafield${selected.length === 1 ? "" : "s"}`}
+        primaryAction={{
+          content: `Update ${selected.length} value${selected.length === 1 ? "" : "s"}`,
+          loading: isBulkEditing,
+          onAction: submitBulkEdit,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setBulkEditOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              Set the same value on{" "}
+              <Text as="span" fontWeight="semibold">
+                {selected.length} metafield{selected.length === 1 ? "" : "s"}
+              </Text>{" "}
+              across your selected {OWNER_CONFIG[ownerType].label.toLowerCase()}.
+            </Text>
+
+            <TextField
+              label="New value"
+              value={bulkValue}
+              onChange={setBulkValue}
+              multiline={4}
+              autoComplete="off"
+              helpText="Applied to every selected row. Leave empty to clear the values."
+            />
+
+            {selectedTypes.length > 1 && (
+              <div
+                style={{
+                  background: "#FFFBEB",
+                  border: "1px solid #FDE68A",
+                  borderRadius: "8px",
+                  padding: "12px 14px",
+                }}
+              >
+                <Text as="p" variant="bodySm">
+                  Your selection spans {selectedTypes.length} types (
+                  {selectedTypes.join(", ")}). Shopify validates the value against each
+                  field&apos;s own type, so rows it rejects are reported and left unchanged.
+                </Text>
+              </div>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
