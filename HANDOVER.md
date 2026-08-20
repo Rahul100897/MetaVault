@@ -1,20 +1,20 @@
 # MetaVault — session handover
 
-Written 2026-08-15, substantially updated 2026-08-17. Covers the Railway
-deployment, App Store submission progress, the Help & feedback page, the
-storelivo.com email stack (§11), and what is left. Read this before touching
-anything.
+Written 2026-08-15, substantially updated 2026-08-20. Covers the Railway
+deployment, the App Store submission, the Help & feedback page, the
+storelivo.com email stack (§11), and what is still open (§12). Read this before
+touching anything.
 
-**Where things stand in one paragraph:** the app is live on Railway and healthy,
-running `main` at `deed5d0` on Node 22. The **offline-token bug is fixed** and so
-is a hydration bug that would have broken the public legal pages the moment
-`APP_CONTACT_EMAIL` was set. The **agency domain `storelivo.com` is fully wired**
-— Cloudflare DNS + Email Routing for receiving, Resend verified for sending — so
-**merchant email notifications are live for the first time**. The App Store
-listing is filled in and saved with **one blocker left: a screencast video**. The
-AI self review is done (30 pass, 0 fail, 1 needs review). Paid plans have no free
-trial, deliberately. Nothing is blocked on engineering; what remains is a video,
-a Gmail SMTP setting, and end-to-end testing on the dev store (§12).
+**Where things stand in one paragraph:** **MetaVault was submitted to the Shopify
+App Store on 2026-08-20** and is awaiting a reviewer. The app is live on Railway
+and healthy, running `main` at `784be67` on Node 22. The offline-token bug is
+fixed, as is a hydration bug that would have broken the public legal pages the
+moment `APP_CONTACT_EMAIL` was set. The agency domain `storelivo.com` is fully
+wired — Cloudflare DNS + Email Routing for receiving, Resend verified for
+sending — so **merchant email notifications are live for the first time**. Bulk
+edit shipped. Paid plans have no free trial, deliberately. **Nothing is blocked
+on engineering: the next move belongs to Shopify.** Review mail goes to
+`metavaultsapp@gmail.com`, which does not forward — see §12.
 
 ---
 
@@ -102,9 +102,9 @@ Partners org `1991389`, app id `390008537089`. Dev Dashboard org `129777563`.
 | Protected customer data request | ✅ 16/16 |
 | Automated checks for common errors | ✅ passed |
 | Embedded app checks | ✅ passed |
-| **Create listing content** | 🟡 filled and saved — **1 issue left: Screencast URL** |
+| **Create listing content** | ✅ complete, screencast URL added |
 | **Run AI self review** | ✅ run, and marked done in the dashboard |
-| **Submit for review** | ❌ blocked only by the screencast |
+| **Submit for review** | ✅ **SUBMITTED 2026-08-20** — awaiting reviewer assignment |
 
 **The listing is otherwise complete.** Name, category (Store design › Content ›
 Metafields), category details, language, introduction, details, 5 features,
@@ -114,10 +114,18 @@ screenshots + feature media, and 3 public pricing plans are all entered and
 saved. Everything entered is mirrored in `APP_STORE_LISTING.md` so it never has
 to be retyped.
 
-**The only remaining blocker is a screencast**: a 3–8 minute video showing
-onboarding and core functionality, hosted anywhere public (unlisted YouTube is
-fine). It is for reviewers, not the public listing. A suggested shot list is in
-`APP_STORE_LISTING.md`.
+**Screencast submitted:** `https://youtu.be/qoJhwNfvvZ0` — 4:05, unlisted, no
+narration. Hosted on the **Storelivo** YouTube channel (handle was still
+`@MetaVault-app` at submission; the channel name is Storelivo so the two
+disagree — YouTube allows two handle changes per 14 days if you want to align
+them). Brand assets used to build it live in `~/Downloads/metavault-brand/`
+(avatar, banner, thumbnail, plus the source HTML — regenerate with Chrome
+headless).
+
+Note the shot list this doc previously claimed was in `APP_STORE_LISTING.md` was
+never actually there. The recorded video does not follow a written shot list; a
+timestamped breakdown of what it actually shows was derived from the footage and
+is the basis of §12's testing notes.
 
 Two traps found while filling it in, both already cleaned up — but they recur if
 you re-edit the form: repeated **Save** attempts **duplicate the Features list**
@@ -571,24 +579,86 @@ Cloudflare account's own address. DNS records show **Locked** (Cloudflare-manage
 
 ---
 
-## 12. What is pending, and what needs testing
+## 12. Submission status, and what is still open
 
-Current as of 2026-08-17, `main` at `deed5d0`.
+**SUBMITTED TO THE APP STORE 2026-08-20.** `main` at `784be67`. Status in the
+Partner Dashboard: *Submitted — "We're assigning a reviewer to your submission"*.
+A **Withdraw** button is available if something serious turns up.
 
-### Blocking App Store submission
+Nothing is blocked on engineering. Do not start new work on the listing until
+Shopify replies — a submission under review should be left still.
 
-1. **Screencast video** — 3–8 min, onboarding + core flows, hosted anywhere public
-   (unlisted YouTube is fine). Shot list in `APP_STORE_LISTING.md`. This is the
-   only thing standing between the listing and Submit.
-2. **Re-run the automated checks** just before submitting — they expire after 30
-   days and were last run around 2026-08-14.
-3. **Update the listing's three email fields** to `support@storelivo.com`
-   (support, merchant review, app submission) and the Partner **business name** to
-   `Storelivo`. The listing currently shows Developer "IT".
+### What went in
 
-### Needs a decision, not engineering
+- Screencast: `https://youtu.be/qoJhwNfvvZ0` — 4:05, silent screen recording,
+  unlisted. Voiceover was scripted but the submitted cut has no narration.
+- Partner **business name changed to `Storelivo`** — the listing no longer shows
+  "Developer: IT". The Partner Directory **slug is still `vidhan`** and needs a
+  Shopify support ticket (§11).
+- **Automated checks did NOT need re-running.** They were last run ~2026-08-14
+  and expire after 30 days, so they were still valid on submission day. An
+  earlier version of this doc wrongly said to re-run them.
+- The AI listing check flagged one issue before submission: *"App card subtitle
+  can't be a list of keywords."* The old subtitle
+  `Bulk edit metafields, manage metaobjects, back up custom data` was three
+  comma-separated features. It was reworded to a single value sentence — the
+  suggested wording was `Manage metafields and metaobjects in bulk, without code`
+  (55/62 chars). **Confirm the exact live value and sync `APP_STORE_LISTING.md`
+  line 190**, which still records the old one.
 
-4. **Export/import CSV retention.** Backups expire at 30 days and the sweep in
+### ⚠️ Watch this inbox
+
+Shopify sends all review correspondence to **`metavaultsapp@gmail.com`** — the
+app submission email, which was left unchanged. **It does not forward anywhere.**
+`support@storelivo.com` forwards to `thakorrahul285@gmail.com`; that Gmail does
+not. Set up forwarding from `metavaultsapp@gmail.com`, or a reviewer's question
+will sit unread and stall the review.
+
+### Decision waiting: App Store visibility
+
+The listing is set to **direct-URL only** — "When your listing is published, it
+will only be accessible to merchants who have its direct URL." A **Make fully
+visible** button flips it, reversibly.
+
+For a first app with zero reviews, discovery is the only route to the reviews
+that are the real gap against Metafields Guru (5.0, 219 reviews). Hidden is a
+defensible soft launch, but choose it deliberately rather than by default.
+
+### The "Free trial" badge — investigated, no action needed
+
+The Plans page shows `Free trial` / "Trial ends 21 Aug 2026" while the listing
+says there is no trial. Verified against the Admin API, the dev store's
+subscription is:
+
+    name MetaVault Agency · status ACTIVE · test TRUE · 29.00 USD/EVERY_30_DAYS
+    trialDays 7 · created 2026-08-14T16:30:35Z · period end 2026-09-20T16:30:59Z
+
+- **`test: true`** — sandbox billing. No invoice, no money, ever. Do not worry
+  about the 20 Sept period end.
+- The trial is baked into a subscription created hours *before* trials were
+  removed in `6332d29`. New subscriptions get `trialDays: 0`.
+- **The badge self-clears.** `app.billing.tsx:275` gates it on
+  `new Date(trialEndsAt) > new Date()`, so it disappears after 21 Aug.
+- **A reviewer never sees it.** `trialEndsAt` derives from the live subscription
+  (`billing.server.ts:116`); with no subscription the snapshot is
+  `plan: "free", trialEndsAt: null`. A reviewer installs on their own store,
+  lands on Free, and no trial UI renders. The only exposure is the video, at ~3:30.
+- **Do not "fix" this in code.** Suppressing real billing state to match
+  marketing copy would make the app lie to a merchant who genuinely has a trial.
+- If you re-record the demo later, cancel and recreate the subscription first —
+  but **never** while a submission is under review, and only after setting
+  `SHOPIFY_BILLING_TEST=true` (see §5), or the new charge would be real.
+
+### Do NOT cancel the dev-store Agency subscription
+
+It keeps paid features testable at zero cost. `SHOPIFY_BILLING_TEST` has been
+deleted from Railway, so `billingTestMode()` now resolves from
+`NODE_ENV !== "production"` — false in production. A fresh subscription would be
+a **real** charge attempt.
+
+### Still needs a decision, not engineering
+
+**Export/import CSV retention.** Backups expire at 30 days and the sweep in
    `app/jobs/cleanup.server.ts` enforces it. Export/import CSVs have no `expiresAt`
    and are **never deleted**. Needs a retention number, then `expiresAt` on
    `ExportJob`/`ImportJob` + a migration + extending the sweep. Options considered:
